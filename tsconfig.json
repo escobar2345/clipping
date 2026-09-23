@@ -13,7 +13,6 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "esModuleInterop": true,
-    "moduleDetection": "next",
     "jsx": "preserve",
     "baseUrl": ".",
     "plugins": [
