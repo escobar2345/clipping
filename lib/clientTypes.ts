@@ -14,9 +14,18 @@ export interface AccountChannels {
   error?: string;
 }
 
-/** Result of a single Buffer post attempt. */
+/** Result of posting to Buffer — one request fans out to every selected
+ *  channel across every selected account (see /api/buffer/post), so the
+ *  response carries an aggregate summary plus per-target details. */
 export interface PostResponse {
   ok: boolean;
+  /** Aggregate outcome across all targeted channels. */
+  summary: {
+    succeeded: number;
+    failed: number;
+    total: number;
+  };
+  /** Id of a single post (kept for single-target responses). */
   id?: string;
   error?: string;
 }

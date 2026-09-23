@@ -14,7 +14,9 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "jsx": "preserve",
-    "baseUrl": ".",
+    // NOTE: do NOT add "baseUrl" — the project has a local ./remotion/ folder,
+    // and with baseUrl set, TS would resolve `import ... from "remotion"` to
+    // that folder instead of node_modules/remotion (shadowing the package).
     "plugins": [
       {
         "name": "next"
