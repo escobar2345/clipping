@@ -719,7 +719,7 @@ export default function Page() {
       )}
 
       {/* Multi-account Buffer management — add/remove API keys, see channels */}
-      <AccountsManager accounts={accountChannels} onChanged={refreshAccountsAndChannels} />
+      <AccountsManager accounts={accountChannels} savedAccounts={savedAccounts} onChanged={refreshAccountsAndChannels} />
 
       {/* Step 1: source video */}
       <section style={stepStyle}>

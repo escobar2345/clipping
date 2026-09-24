@@ -29,3 +29,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Server-side persisted data (Buffer accounts.json, prompt overrides) — never commit API keys
+data/
