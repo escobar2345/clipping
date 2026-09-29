@@ -10,9 +10,11 @@ import fs from "fs";
  * HTTP. Locally (`npm run dev` / `npm start` on your own PC) we spawn it
  * automatically from the Next.js process — no manual step needed.
  *
- * On Railway (RAILWAY_ENVIRONMENT is set) auto-spawn is OFF by default:
+ * On Railway (any RAILWAY_* env var is set — Railway sets
+ * RAILWAY_ENVIRONMENT_ID / RAILWAY_PROJECT_ID / etc. on every deploy;
+ * RAILWAY_ENVIRONMENT alone is NOT reliable) auto-spawn is OFF by default:
  * the Node-only web service must NOT try to run Python/torch there.
- * Either disable the Voice Studio on that deploy, or run voice_server.py
+ * Either leave the Voice Studio off on that deploy, or run voice_server.py
  * as a separate service and set VOICE_SERVER_URL to it.
  *
  * Env knobs:
@@ -28,12 +30,20 @@ import fs from "fs";
 
 export const VOICE_DEFAULT_PORT = 8788;
 const EXPLICIT_AUTO_START = process.env.VOICE_AUTO_START;
-// On Railway (or any host where RAILWAY_ENVIRONMENT is set), NEVER try to
+// On Railway (any RAILWAY_* env var is set), NEVER try to
 // spawn a local Python bridge unless the user explicitly opted in with
 // VOICE_AUTO_START=1. The Node-only web service has no torch/chatterbox
 // installed — spawning python would just burn CPU/RAM/timeout on a $5 Hobby
 // plan. Run voice_server.py as a separate service and set VOICE_SERVER_URL.
-const IS_RAILWAY = !!process.env.RAILWAY_ENVIRONMENT;
+const IS_RAILWAY =
+  !!(
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_ENVIRONMENT_ID ||
+    process.env.RAILWAY_ENVIRONMENT_NAME ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    process.env.RAILWAY_DEPLOYMENT_ID
+  );
 const AUTO_START =
   EXPLICIT_AUTO_START !== undefined
     ? EXPLICIT_AUTO_START !== "0"
