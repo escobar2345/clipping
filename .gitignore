@@ -1,11 +1,22 @@
 # Dependencies
 node_modules/
 
-# Build outputs
+# Build outputs (Next.js, python bytecode, local test junk) — never commit
 .next/
 out/
 dist/
 build/
+__pycache__/
+*.pyc
+*.pyo
+build2.txt
+page.html
+server_pid.txt
+start_out.txt
+status.json
+test_out*.txt
+test_results.txt
+tsconfig.tsbuildinfo
 
 # Environment variables (but keep example files)
 .env
@@ -30,5 +41,13 @@ Thumbs.db
 *.swp
 *.swo
 
+# Local copy of upstream chatterbox source (pip package chatterbox-tts covers
+# deploys — see voice-server/requirements.txt). Kept locally, not committed.
+chatterbox-master/
+
 # Server-side persisted data (Buffer accounts.json, prompt overrides) — never commit API keys
 data/
+
+# Generated voice files (Voice Studio) — artifacts, not source
+public/voice/
+voice-server/voice-server.log

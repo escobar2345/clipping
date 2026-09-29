@@ -1,0 +1,9 @@
+# Voice Studio bridge server dependencies.
+# Install with:  pip install -r voice-server/requirements.txt
+#
+# NOTE: chatterbox-tts pins specific PyTorch/transformers versions (see its
+# pyproject.toml). On Railway, install these in the same environment that runs
+# `next start` so the spawned Python server can import them, OR run this
+# voice-server as its own Railway service and point VOICE_SERVER_URL at it.
+flask>=3.0
+chatterbox-tts==0.1.7

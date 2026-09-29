@@ -31,6 +31,56 @@ Fill in `.env.local`:
 npm run dev
 ```
 
+## Voice Studio (voice over + voice cloning)
+
+The app has two tabs: **Video Studio** (the long-form → short-clip → Buffer pipeline above)
+and **Voice Studio**. Voice Studio uses the open-source
+[Chatterbox TTS](https://github.com/resemble-ai/chatterbox) engine (Python/PyTorch) that ships
+in this repo at `chatterbox-master/` to:
+
+- **Text to speech** — type a script, pick a model (Multilingual / Base / Turbo / Nano),
+  optionally upload a **5–10 s reference clip to clone a voice**, tune
+  exaggeration/CFG/temperature, and generate a `.wav`.
+- **Voice conversion** — upload any audio recording plus a target voice clip, and the `/vc`
+  model re-voices the recording.
+
+### How it connects
+
+Next.js is Node, Chatterbox is Python, so a tiny bridge server
+(`voice-server/voice_server.py`, Flask) wraps the model. When you open the Voice Studio tab,
+the app auto-starts the bridge on `127.0.0.1:8788` (unless `VOICE_SERVER_URL` is set) and
+proxies file uploads through `/api/voice/*`. Generated audio is saved to `public/voice/` and
+served straight from Next.
+
+### Install the Python dependencies
+
+```bash
+# from the project root — on your local machine OR on Railway after you deploy:
+python -m pip install -r voice-server/requirements.txt
+# which installs flask + chatterbox-tts (torch, etc. — this is a large download,
+# roughly 5 GB on first run including the model weights)
+```
+
+Then just open the **Voice Studio** tab. The first generation downloads the model weights
+into your HuggingFace cache and can take several minutes; afterwards generations are fast.
+If the bridge can't start, the tab shows exactly what's missing.
+
+### Voice Studio env knobs (all optional)
+
+Set these only for custom setups — everything auto-detects by default:
+
+- `VOICE_SERVER_URL` — point at a bridge you run yourself (e.g. a separate Railway service),
+  e.g. `http://127.0.0.1:8788`.
+- `VOICE_PYTHON` — python executable used to spawn the bridge
+  (default `python3` on unix / `python` on Windows).
+- `VOICE_PORT` — local bridge port (default `8788`).
+- `VOICE_AUTO_START` — set to `0` to disable auto-start.
+
+If you deploy to Railway: install `voice-server/requirements.txt` in the same service that
+runs `next start` (Railway supports a multi-language build), or run `voice_server.py` as its
+own Railway service and set `VOICE_SERVER_URL`. Give the Voice Studio request a generous timeout
+— the route exports `maxDuration = 900`.
+
 ## How the pipeline works
 
 1. **Analyze** (`/api/analyze`) — you paste a YouTube URL, Apify returns title, duration,
