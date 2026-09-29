@@ -265,11 +265,13 @@ export default function VoiceStudio() {
         {!checking && !ready && (
           <p style={{ fontSize: 13, color: "#E8E6E1", margin: "8px 0 10px", whiteSpace: "pre-line" }}>
             {health?.status === "unavailable"
-              ? `Could not reach the Python voice server.\n\n${health?.error ?? ""}`
+              ? `${/Railway web service/i.test(health?.error ?? "")
+                  ? "Voice engine is turned off on this Railway deploy (Node-only, no Python by design).\n\nUse the 🎬 Video Studio tab here — it works fine. For voice-overs, run the app on your own PC (`npm run dev`) after `pip install -r voice-server/requirements.txt`."
+                  : `Could not reach the Python voice server.\n\n${health?.error ?? ""}`}`
               : `The Python bridge server started but Chatterbox isn't installed yet.\n\n${health?.error ?? ""}`}
           </p>
         )}
-        {!checking && !ready && (
+        {!checking && !ready && !/Railway web service/i.test(health?.error ?? "") && (
           <code
             style={{
               display: "block",

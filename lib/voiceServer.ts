@@ -163,6 +163,16 @@ export async function ensureVoiceServer(): Promise<VoiceHealth> {
         ". Make sure that server is running."
     );
   }
+  // Railway web service is Node-only (nixpacks.toml providers=["node"]):
+  // there is no python3/torch here by design. Never attempt spawn — return a
+  // clear message instead of a confusing ENOENT.
+  if (IS_RAILWAY) {
+    throw new Error(
+      "Voice engine is not enabled on this Railway web service (Node-only build, no Python). " +
+        "Use the Video Studio here, and run the Voice Studio on your own PC with `npm run dev`, " +
+        "or deploy voice-server as a separate Railway service and set VOICE_SERVER_URL to it."
+    );
+  }
   if (!AUTO_START) {
     throw new Error(
       "Voice Studio bridge is not reachable and auto-start is disabled " +
