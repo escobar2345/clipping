@@ -7,8 +7,13 @@ import fs from "fs";
  *
  * The bridge is a tiny Flask HTTP server that wraps the chatterbox-master
  * TTS / voice-conversion library (Python/PyTorch). Next.js talks to it over
- * localhost. If it isn't already running we spawn it automatically from the
- * Next.js process — so `npm run dev` / `npm start` is all you need locally.
+ * HTTP. Locally (`npm run dev` / `npm start` on your own PC) we spawn it
+ * automatically from the Next.js process — no manual step needed.
+ *
+ * On Railway (RAILWAY_ENVIRONMENT is set) auto-spawn is OFF by default:
+ * the Node-only web service must NOT try to run Python/torch there.
+ * Either disable the Voice Studio on that deploy, or run voice_server.py
+ * as a separate service and set VOICE_SERVER_URL to it.
  *
  * Env knobs:
  *   VOICE_SERVER_URL   — point at an externally hosted bridge (e.g. a second
@@ -16,12 +21,23 @@ import fs from "fs";
  *   VOICE_PORT         — local bridge port (default 8788).
  *   VOICE_PYTHON       — python executable used to spawn the bridge
  *                        (default: python3 on unix, python on Windows).
- *   VOICE_AUTO_START   — set to "0" to disable auto-spawning (you start the
- *                        bridge yourself: `python voice-server/voice_server.py`).
+ *   VOICE_AUTO_START   — "1"/"0" to force auto-spawn on/off. Default: on
+ *                        locally, OFF on Railway. (Anything except "0" counts
+ *                        as on when explicitly set.)
  */
 
 export const VOICE_DEFAULT_PORT = 8788;
-const AUTO_START = process.env.VOICE_AUTO_START !== "0";
+const EXPLICIT_AUTO_START = process.env.VOICE_AUTO_START;
+// On Railway (or any host where RAILWAY_ENVIRONMENT is set), NEVER try to
+// spawn a local Python bridge unless the user explicitly opted in with
+// VOICE_AUTO_START=1. The Node-only web service has no torch/chatterbox
+// installed — spawning python would just burn CPU/RAM/timeout on a $5 Hobby
+// plan. Run voice_server.py as a separate service and set VOICE_SERVER_URL.
+const IS_RAILWAY = !!process.env.RAILWAY_ENVIRONMENT;
+const AUTO_START =
+  EXPLICIT_AUTO_START !== undefined
+    ? EXPLICIT_AUTO_START !== "0"
+    : !IS_RAILWAY;
 const PYTHON_BIN = process.env.VOICE_PYTHON;
 
 export type VoiceHealth = {

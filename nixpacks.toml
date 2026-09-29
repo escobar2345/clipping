@@ -1,0 +1,17 @@
+# Force Railway/Nixpacks to treat this service as Node-only.
+# Without this, Nixpacks can auto-detect Python from
+# voice-server/requirements.txt and try to install torch/chatterbox
+# (multi-GB, OOMs and burns Hobby credit on a $5 plan).
+providers = ["node"]
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"
