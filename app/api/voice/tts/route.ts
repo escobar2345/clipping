@@ -1,17 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { withAuth } from "../../../../lib/withAuth";
+import { voiceDir, voiceUrlPath } from "../../../../lib/userPaths";
 import { forwardToVoice } from "../../../../lib/voiceServer";
 
 // Voice-over + voice cloning endpoint. Receives the same multipart fields the
 // Python bridge expects (text, model, language, params, optional voice_ref),
-// forwards them, and stores the returned .wav in public/voice so the browser
-// can play it. Gen + one-time model download can take minutes.
+// forwards them, and stores the returned .wav in public/voice/<userId>/ so the
+// browser can play it. Gen + one-time model download can take minutes.
 export const runtime = "nodejs";
 export const maxDuration = 900;
-
-const VOICE_OUT_DIR = path.join(process.cwd(), "public", "voice");
 
 function audioHeaders(upstream: Response) {
   return {
@@ -21,7 +21,7 @@ function audioHeaders(upstream: Response) {
   };
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withAuth(async (req: Request) => {
   try {
     const form = await req.formData();
 
@@ -43,16 +43,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message }, { status: upstream.status === 503 ? 503 : 502 });
     }
 
-    fs.mkdirSync(VOICE_OUT_DIR, { recursive: true });
+    // Stored under this user's own folder, never a shared one.
+    const outDir = voiceDir();
     const fileName = `tts-${Date.now()}-${randomUUID().slice(0, 8)}.wav`;
-    const filePath = path.join(VOICE_OUT_DIR, fileName);
+    const filePath = path.join(outDir, fileName);
     const buffer = Buffer.from(await upstream.arrayBuffer());
     fs.writeFileSync(filePath, buffer);
 
     const meta = audioHeaders(upstream);
     const created = fs.statSync(filePath).mtime;
     return NextResponse.json({
-      url: `/voice/${fileName}`,
+      url: voiceUrlPath(fileName),
       file: fileName,
       sizeMb: Math.round((buffer.length / 1024 / 1024) * 100) / 100,
       sr: meta.sr,
@@ -66,4 +67,4 @@ export async function POST(req: NextRequest) {
       { status: 502 }
     );
   }
-}
+});

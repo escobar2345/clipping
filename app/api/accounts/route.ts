@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import {
   loadAccounts,
   saveAccounts,
@@ -6,22 +6,27 @@ import {
   newAccountId,
   toPublic,
 } from "../../../lib/accounts";
+import { withAuth } from "../../../lib/withAuth";
 import { resolveBufferAccount } from "../../../lib/buffer";
 
 /**
  * Buffer account registry — what the "Buffer accounts" panel talks to.
  *
- * GET    → list saved accounts (tokens NEVER leave the server)
+ * GET    → list this user's saved accounts (tokens NEVER leave the server)
  * POST   → validate a pasted personal API key live against Buffer, resolve its
- *          organization, and persist it to data/accounts.json
- * DELETE → remove a saved account (the env-var "Default" can't be deleted here)
+ *          organization, and persist it to data/users/<userId>/accounts.json
+ * DELETE → remove one of this user's saved accounts (the env-var "Default"
+ *          can't be deleted here)
+ *
+ * These are real credentials that can post to someone's social accounts, so
+ * every account here belongs to ONE user and is stored in their own file.
  */
 
-export async function GET() {
+export const GET = withAuth(async () => {
   return NextResponse.json({ accounts: listAccounts().map(toPublic) });
-}
+});
 
-export async function POST(req: NextRequest) {
+export const POST = withAuth(async (req: Request) => {
   let body: { name?: string; accessToken?: string; organizationId?: string };
   try {
     body = await req.json();
@@ -60,9 +65,9 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-}
+});
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = withAuth(async (req: Request) => {
   let body: { id?: string };
   try {
     body = await req.json();
@@ -86,4 +91,4 @@ export async function DELETE(req: NextRequest) {
   }
   saveAccounts(next);
   return NextResponse.json({ ok: true });
-}
+});

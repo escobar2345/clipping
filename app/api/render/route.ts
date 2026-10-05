@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
+import { withAuth } from "../../../lib/withAuth";
+import { rendersDir, rendersUrlPath } from "../../../lib/userPaths";
 import { ensureVideoFile } from "../../../lib/youtube";
 import { ensureVideoFileAnyUrl, isYouTubeUrl } from "../../../lib/anywhere";
 import type { EditPlan } from "../../../lib/types";
@@ -19,7 +21,7 @@ export const maxDuration = 300;
  *  hosts like Vercel have a read-only app directory — fail up front with a
  *  human message instead of ENOENT/EROFS mid-render. */
 function assertWritableDisk() {
-  const probeDir = path.join(process.cwd(), "public", "renders");
+  const probeDir = rendersDir();
   try {
     fs.mkdirSync(probeDir, { recursive: true });
     const probe = path.join(probeDir, `.write-probe-${Date.now()}`);
@@ -34,7 +36,8 @@ function assertWritableDisk() {
   }
 }
 
-export async function POST(req: NextRequest) {
+export const POST = withAuth(
+  async (req: Request) => {
   try {
     const { editPlan, clipIndex, sourceUrl } = (await req.json()) as {
       editPlan: EditPlan;
@@ -106,7 +109,7 @@ export async function POST(req: NextRequest) {
       inputProps,
     });
 
-    const outDir = path.join(process.cwd(), "public", "renders");
+    const outDir = rendersDir();
     fs.mkdirSync(outDir, { recursive: true });
     // clipId arrives in client JSON and becomes a file name — strip path chars
     const clipId = sanitizeClipId(editPlan.clips[clipIndex].clipId, `clip-${clipIndex}`);
@@ -143,8 +146,11 @@ export async function POST(req: NextRequest) {
     });
     fs.writeFileSync(manifestPath, JSON.stringify({ renders }, null, 2));
 
-    return NextResponse.json({ url: `/renders/${clipId}.mp4` });
+    return NextResponse.json({ url: rendersUrlPath(`${clipId}.mp4`) });
   } catch (err: any) {
     return NextResponse.json({ error: err.message ?? "Render failed" }, { status: 500 });
   }
-}
+  }
+  // NOT metered: the video was already counted when it was analyzed/uploaded.
+  // Metering here would burn one quota unit per rendered clip.
+);

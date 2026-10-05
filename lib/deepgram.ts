@@ -5,6 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import type { ClipPlan, TranscriptWord } from "./types";
+import { dataDir } from "./userPaths";
 import { retimeClipWithWords, tightenEnabled } from "./tighten";
 
 const execFileAsync = promisify(execFile);
@@ -141,7 +142,10 @@ function cacheFile(videoPath: string, size: number, mtimeMs: number): string {
     )
     .digest("hex")
     .slice(0, 24);
-  return path.join(process.cwd(), "data", "transcripts", `${id}.json`);
+  // Cached per user, so one account's transcript never becomes another's.
+  const dir = path.join(dataDir(), "transcripts");
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${id}.json`);
 }
 
 /** Word-level transcript of the whole video, in absolute source seconds. */

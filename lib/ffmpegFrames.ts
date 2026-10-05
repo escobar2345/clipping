@@ -26,3 +26,26 @@ export async function extractFramesAsDataUris(
   // no frame analysis (text-only path still works).
   return [];
 }
+
+/**
+ * A video's duration in seconds, read with ffprobe (ships with ffmpeg).
+ * Used for uploaded files that never went through Apify, so their duration
+ * isn't already known. Returns 0 when the duration can't be read.
+ */
+export async function getVideoDurationSec(videoPath: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      videoPath,
+    ]);
+    const dur = parseFloat(String(stdout).trim());
+    return Number.isFinite(dur) ? dur : 0;
+  } catch {
+    return 0; // ffprobe missing or file unreadable — callers fall back
+  }
+}

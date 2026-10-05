@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { withAuth } from "../../../lib/withAuth";
 import { generateEditPlan } from "../../../lib/nvidiaGlm";
 import { buildVisualContext } from "../../../lib/visualScan";
 import { ensureTranscript } from "../../../lib/transcript";
@@ -11,7 +12,7 @@ import {
 
 export const maxDuration = 300;
 
-export async function POST(req: NextRequest) {
+export const POST = withAuth(async (req: Request) => {
   try {
     const body = await req.json();
     const intel = body.intel as VideoIntel;
@@ -61,4 +62,4 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     return NextResponse.json({ error: err.message ?? "Edit plan generation failed" }, { status: 500 });
   }
-}
+});

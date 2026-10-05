@@ -1,0 +1,436 @@
+import fs from "fs";
+import path from "path";
+import { withRetry } from "./retry";
+import { extractTranscript, parseSubtitleText } from "./subtitles";
+import { extractVideoId, uploadsDir } from "./youtube";
+import { downloadSubtitles, probeMetadata } from "./ytdlp";
+import type { TranscriptWord, VideoIntel } from "./types";
+
+/**
+ * Apify — fetches the metadata and transcript for a source video.
+ *
+ * Runs a configurable YouTube actor (APIFY_YOUTUBE_ACTOR_ID) and maps whatever
+ * it returns into the app's `VideoIntel` shape. Different actors name fields
+ * differently, so `mapItem()` coerces the common variants instead of assuming
+ * one schema — see README ("lib/apify.ts has placeholder field names").
+ *
+ * When the actor returns NO transcript this falls back to the platform's own
+ * caption track via yt-dlp (free, and it has real word timings). Deepgram gets
+ * the last word at edit-plan time if there are no captions either.
+ *
+ *   APIFY_TOKEN              required, from apify.com → Settings → Integrations
+ *   APIFY_YOUTUBE_ACTOR_ID   required, e.g. "streamers~youtube-scraper"
+ *   APIFY_API_BASE           optional, defaults to https://api.apify.com/v2
+ *   APIFY_RUN_TIMEOUT_SEC    optional, defaults to 240
+ *
+ * This step is METADATA-ONLY by design: `videoFilePath` is left empty and the
+ * pixels are pulled lazily at render time (see lib/youtube.ts), so pasting a
+ * link stays fast.
+ */
+
+const APIFY_BASE = (process.env.APIFY_API_BASE ?? "https://api.apify.com/v2").replace(/\/+$/, "");
+const RUN_TIMEOUT_SEC = Number(process.env.APIFY_RUN_TIMEOUT_SEC ?? 240) || 240;
+
+/** Reads a required env var or throws a message naming the exact fix. */
+function requireEnv(key: string, hint: string): string {
+  const value = (process.env[key] ?? "").trim();
+  if (!value || value.startsWith("your_")) {
+    throw new Error(
+      `${key} is not set in .env.local. ${hint} ` +
+        "(copy .env.local.example to .env.local, fill it in, then restart the dev server)."
+    );
+  }
+  return value;
+}
+
+function apifyConfig(): { token: string; actorId: string } {
+  return {
+    token: requireEnv(
+      "APIFY_TOKEN",
+      "Create one at apify.com → Settings → Integrations → API tokens."
+    ),
+    actorId: requireEnv(
+      "APIFY_YOUTUBE_ACTOR_ID",
+      "Pick a YouTube scraper/transcript actor in the Apify Store and paste its id (e.g. streamers~youtube-scraper)."
+    ),
+  };
+}
+
+/** Starts an actor run without waiting, and returns its run id. */
+async function startRun(input: Record<string, any>, actorIdOverride?: string): Promise<string> {
+  const { token } = apifyConfig();
+  const actorId = actorIdOverride ?? apifyConfig().actorId;
+  const url =
+    `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/runs` +
+    `?token=${encodeURIComponent(token)}&waitForFinish=0`;
+  const res = await withRetry(
+    () =>
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(60_000),
+      }),
+    2
+  );
+  const body: any = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(
+      `Apify rejected the run (HTTP ${res.status}): ${body?.error?.message ?? "unknown error"}`
+    );
+  }
+  const runId = body?.data?.id;
+  if (!runId) throw new Error("Apify did not return a run id.");
+  return String(runId);
+}
+
+/** Polls a run until it finishes, then returns its default dataset id. */
+async function waitForRun(runId: string): Promise<string> {
+  const { token } = apifyConfig();
+  const deadline = Date.now() + (RUN_TIMEOUT_SEC + 120) * 1000;
+  while (Date.now() < deadline) {
+    const res = await withRetry(
+      () =>
+        fetch(
+          `${APIFY_BASE}/actor-runs/${encodeURIComponent(runId)}?token=${encodeURIComponent(token)}`,
+          { cache: "no-store", signal: AbortSignal.timeout(60_000) }
+        ),
+      2
+    );
+    const body: any = await res.json().catch(() => null);
+    const status = body?.data?.status;
+    if (status === "SUCCEEDED") {
+      const datasetId = body?.data?.defaultDatasetId;
+      if (datasetId) return String(datasetId);
+      throw new Error("The Apify run succeeded but returned no dataset.");
+    }
+    if (status === "FAILED" || status === "ABORTED") {
+      throw new Error(
+        `The Apify actor ${status.toLowerCase()}: ${body?.data?.error?.message ?? "no reason given"}. ` +
+          `See the run at apify.com/actors/runs/${encodeURIComponent(runId)}`
+      );
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  throw new Error(
+    `The Apify actor still hadn't finished after ${Math.round((RUN_TIMEOUT_SEC + 120) / 60)} minutes.`
+  );
+}
+async function fetchDatasetItems(datasetId: string): Promise<Record<string, any>[]> {
+  const { token } = apifyConfig();
+  const res = await withRetry(
+    () =>
+      fetch(
+        `${APIFY_BASE}/datasets/${encodeURIComponent(datasetId)}/items` +
+          `?token=${encodeURIComponent(token)}&clean=true&format=json`,
+        { cache: "no-store", signal: AbortSignal.timeout(120_000) }
+      ),
+    2
+  );
+  if (!res.ok) throw new Error(`Could not read the Apify dataset (HTTP ${res.status}).`);
+  const items: any = await res.json().catch(() => null);
+  return Array.isArray(items) ? items : [];
+}
+
+/**
+ * Runs the actor and returns its dataset items.
+ *
+ * Tries the synchronous endpoint first (one round-trip). If the actor outlives
+ * the API's limit it falls back to an async run that we poll, so a slow actor
+ * still succeeds instead of dying at the timeout.
+ */
+async function runActor(
+  input: Record<string, any>,
+  actorIdOverride?: string
+): Promise<Record<string, any>[]> {
+  const { token } = apifyConfig();
+  const actorId = actorIdOverride ?? apifyConfig().actorId;
+  const syncUrl =
+    `${APIFY_BASE}/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items` +
+    `?token=${encodeURIComponent(token)}&timeout=${RUN_TIMEOUT_SEC}&memory=2048&format=json&retries=2`;
+
+  try {
+    const res = await fetch(syncUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout((RUN_TIMEOUT_SEC + 60) * 1000),
+    });
+    const body: any = await res.json().catch(() => null);
+
+    if (res.ok && Array.isArray(body)) return body;
+
+    // A run id in the payload means it timed out mid-run — finish it off
+    // instead of throwing, so the work already done isn't wasted.
+    const runId = body?.data?.id ?? body?.runId;
+    if (runId) {
+      return fetchDatasetItems(await waitForRun(String(runId)));
+    }
+
+    // A hard rejection (bad token, actor not found) must not be retried.
+    if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 404) {
+      throw new Error(
+        `Apify returned HTTP ${res.status}: ${body?.error?.message ?? JSON.stringify(body).slice(0, 200)}`
+      );
+    }
+    throw new Error(`Apify returned HTTP ${res.status}.`);
+  } catch (err) {
+    // Explicit rejections bubble straight up; network blips get one retry via
+    // the async path (which is a fresh run, not a repeat of a failed one).
+    if (err instanceof Error && /^Apify returned HTTP 4/.test(err.message)) throw err;
+    const runId = await startRun(input, actorIdOverride);
+    return fetchDatasetItems(await waitForRun(runId));
+  }
+}
+/** First non-empty string among the candidates. */
+function firstString(...vals: unknown[]): string {
+  for (const v of vals) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/** First positive finite number among the candidates. */
+function firstNumber(...vals: unknown[]): number | undefined {
+  for (const v of vals) {
+    const n = typeof v === "string" ? Number(v) : v;
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) return n;
+  }
+  return undefined;
+}
+
+/**
+ * Coerces one actor dataset item into the fields we need. Actors disagree on
+ * names, so every common variant is tried.
+ */
+function mapItem(item: Record<string, any>) {
+  const info = item?.info ?? {};
+  const details = item?.videoDetails ?? {};
+
+  const title =
+    firstString(item?.title, item?.name, details?.title, info?.title) || "Untitled video";
+
+  const durationSec = firstNumber(
+    item?.duration,
+    item?.durationSec,
+    item?.durationSeconds,
+    item?.lengthSeconds,
+    item?.length,
+    details?.lengthSeconds,
+    info?.durationSec
+  );
+
+  // Optional: some actors return cuts as numbers, others as objects.
+  const rawCuts = item?.sceneCuts ?? item?.scenes ?? item?.cuts ?? item?.sceneChanges;
+  const sceneCuts = Array.isArray(rawCuts)
+    ? rawCuts
+        .map((c: any) => firstNumber(c, c?.time, c?.timestamp, c?.start, c?.atSec))
+        .filter((n): n is number => typeof n === "number")
+        .sort((a, b) => a - b)
+    : undefined;
+
+  return { title, durationSec, sceneCuts };
+}
+
+/** One web search hit used to ground the caption coach's advice. */
+export interface ResearchSource {
+  title: string;
+  description: string;
+  url: string;
+}
+
+/** Default SERP actor; override with APIFY_SEARCH_ACTOR_ID in .env.local. */
+const DEFAULT_SEARCH_ACTOR = "apify/google-search-scraper";
+
+function searchActorId(): string {
+  return (process.env.APIFY_SEARCH_ACTOR_ID ?? "").trim() || DEFAULT_SEARCH_ACTOR;
+}
+
+function buildQueries(topic: string): string[] {
+  const t = topic.trim();
+  return [
+    `${t} viral short form video hooks examples`,
+    `${t} trending hashtags tiktok instagram reels`,
+    `${t} content ideas audience growth tips`,
+  ];
+}
+
+/** Converts "HH:MM:SS" / "MM:SS" (optionally with .ms) into seconds. */
+export function parseDurationToSec(raw: unknown): number {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : 0;
+  if (typeof raw !== "string") return 0;
+  const parts = raw.trim().split(":").map((p) => parseFloat(p));
+  if (parts.some((p) => !Number.isFinite(p))) return 0;
+  let sec = 0;
+  for (const p of parts) sec = sec * 60 + p;
+  return Number.isFinite(sec) ? sec : 0;
+}
+
+/**
+ * Searches the live internet through an Apify SERP actor to see what is
+ * actually ranking around the user's topic right now (feeds lib/captionCoach.ts).
+ *
+ * Uses the official apify/google-search-scraper shape: input { queries, … } →
+ * dataset items { organicResults: [{ title, link, description }] }.
+ *
+ * Throws with an actionable message rather than silently returning nothing, so
+ * the Caption Coach panel can tell the user their research key is wrong.
+ */
+export async function researchTopic(
+  topic: string,
+  maxResultsPerQuery = 5
+): Promise<ResearchSource[]> {
+  const queries = buildQueries(topic);
+
+  let items: Record<string, any>[] = [];
+  try {
+    items = await runActor(
+      {
+        queries,
+        resultsPerPage: maxResultsPerQuery,
+        maxPagesPerQuery: 1,
+      },
+      searchActorId()
+    );
+  } catch (err) {
+    throw new Error(
+      `Apify research failed (${err instanceof Error ? err.message : String(err)}). ` +
+        `Check APIFY_TOKEN and APIFY_SEARCH_ACTOR_ID (currently "${searchActorId()}").`
+    );
+  }
+
+  const sources: ResearchSource[] = [];
+  for (const item of items) {
+    const organic: any[] = item.organicResults ?? item.results ?? [];
+    for (const r of organic.slice(0, maxResultsPerQuery)) {
+      sources.push({
+        title: r.title ?? "",
+        description: r.description ?? r.snippet ?? "",
+        url: r.link ?? r.url ?? "",
+      });
+    }
+  }
+  return sources.filter((s) => s.title || s.description).slice(0, 15);
+}
+/** yt-dlp fallback: title/duration straight off the URL. */
+async function metadataFromYtdlp(url: string) {
+  const meta = await probeMetadata(url);
+  if (!meta) return null;
+  return {
+    title: firstString(meta.title) || "Untitled video",
+    durationSec: firstNumber(meta.duration),
+  };
+}
+
+/** yt-dlp fallback: the platform's own caption track as a word transcript. */
+async function captionsFromYtdlp(url: string, stem: string): Promise<TranscriptWord[]> {
+  const sub = await downloadSubtitles({ url, outDir: uploadsDir(), outName: stem });
+  if (!sub) return [];
+  try {
+    return parseSubtitleText(fs.readFileSync(sub, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+export interface IntelResult {
+  intel: VideoIntel;
+  /** Where the transcript came from — "none" means Deepgram handles it later. */
+  transcriptSource: "apify" | "captions" | "none";
+  /** Non-fatal notes worth showing the user. */
+  warnings: string[];
+}
+
+/**
+ * Builds the `VideoIntel` for a pasted video URL: title, duration, word-level
+ * transcript and (when the actor provides them) scene cuts.
+ *
+ * The video FILE is not downloaded here — `videoFilePath` is left empty and
+ * /api/render pulls the pixels lazily through yt-dlp.
+ *
+ * Resilient by design: if the Apify actor is unconfigured, fails, or returns
+ * nothing, this falls back to yt-dlp metadata + captions so a plain YouTube
+ * link still works. Every fallback is reported in `warnings`.
+ */
+export async function fetchVideoIntel(url: string): Promise<IntelResult> {
+  const sourceUrl = url.trim();
+  if (!sourceUrl) throw new Error("No video URL was provided.");
+  if (!/^https?:\/\//i.test(sourceUrl)) {
+    throw new Error(`"${sourceUrl}" is not a valid http(s) URL.`);
+  }
+
+  const warnings: string[] = [];
+  let title = "";
+  let durationSec: number | undefined;
+  let sceneCuts: number[] | undefined;
+  let transcript: TranscriptWord[] = [];
+  let transcriptSource: IntelResult["transcriptSource"] = "none";
+
+  // --- Primary: the Apify actor -------------------------------------------
+  try {
+    const items = await runActor({
+      startUrls: [{ url: sourceUrl }],
+      videoUrl: sourceUrl,
+      maxItems: 1,
+      includeTranscript: true,
+      getSubtitles: true,
+    });
+
+    if (items.length === 0) {
+      warnings.push(
+        "The Apify actor returned no data for this link — used yt-dlp metadata and " +
+          "captions instead. Check that APIFY_YOUTUBE_ACTOR_ID is a YouTube actor that " +
+          "accepts a startUrls input."
+      );
+    } else {
+      const mapped = mapItem(items[0]);
+      title = mapped.title;
+      durationSec = mapped.durationSec;
+      sceneCuts = mapped.sceneCuts;
+      transcript = await extractTranscript(items[0]);
+      if (transcript.length) transcriptSource = "apify";
+    }
+  } catch (err) {
+    warnings.push(
+      `Apify could not fetch this video (${err instanceof Error ? err.message : String(err)}) — ` +
+        `used yt-dlp metadata and captions instead.`
+    );
+  }
+
+  // --- Fallback: yt-dlp ----------------------------------------------------
+  const videoId = extractVideoId(sourceUrl);
+  const stem = videoId ?? `src-${Buffer.from(sourceUrl).toString("base64url").slice(0, 16)}`;
+
+  if (!title || durationSec === undefined) {
+    const fallback = await metadataFromYtdlp(sourceUrl);
+    if (fallback) {
+      title = title || fallback.title;
+      durationSec = durationSec ?? fallback.durationSec;
+    }
+  }
+  if (!transcript.length) {
+    const captions = await captionsFromYtdlp(sourceUrl, stem);
+    if (captions.length) {
+      transcript = captions;
+      transcriptSource = "captions";
+    }
+  }
+
+  if (!transcript.length) {
+    warnings.push(
+      "No captions were found for this video. That's fine when DEEPGRAM_API_KEY is set — " +
+        "the transcript is generated at edit-plan time."
+    );
+  }
+
+  const intel: VideoIntel = {
+    sourceUrl,
+    title: title || "Untitled video",
+    durationSec: durationSec ?? 0,
+    videoFilePath: "", // lazy — /api/render downloads it via yt-dlp
+    transcript,
+    ...(sceneCuts?.length ? { sceneCuts } : {}),
+  };
+
+  return { intel, transcriptSource, warnings };
+}

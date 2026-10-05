@@ -1,14 +1,12 @@
-// Server-side storage for the editable AI system prompt, plus the concise
-// default. Saved to data/prompts.json (same home as accounts.json) so the
-// creator's tuned prompt survives reloads and restarts.
 import fs from "fs";
 import path from "path";
-import { getStore } from "./storage";
+import { dataDir } from "./userPaths";
 
-// Same home as accounts.json — data/ locally, /tmp on read-only hosts
-// (Vercel). Resolved per call so cold starts always read the right place.
+// Server-side storage for the editable AI system prompt, plus the concise
+// default. Saved to data/users/<userId>/prompts.json — the same per-user home as
+// accounts.json — so each account keeps its own tuned prompt across restarts.
 function promptsFile(): string {
-  return path.join(getStore().dir, "prompts.json");
+  return path.join(dataDir(), "prompts.json");
 }
 
 export const DEFAULT_EDIT_SYSTEM_PROMPT = `You are an expert short-form video editor. You are given:

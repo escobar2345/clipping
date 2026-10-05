@@ -11,6 +11,8 @@
   "dependencies": {
     "@remotion/bundler": "^4.0.527",
     "@remotion/renderer": "^4.0.527",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.2",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.1",
     "next": "^14.2.35",

@@ -1,17 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { withAuth } from "../../../../lib/withAuth";
+import { voiceDir, voiceUrlPath } from "../../../../lib/userPaths";
 import { forwardToVoice } from "../../../../lib/voiceServer";
 
 // Voice conversion — re-voice any uploaded audio with a target voice clip
 // using the Chatterbox VC model. Same forwarding pattern as /api/voice/tts.
+// Output lands in this user's own public/voice/<userId>/ folder.
 export const runtime = "nodejs";
 export const maxDuration = 900;
 
-const VOICE_OUT_DIR = path.join(process.cwd(), "public", "voice");
-
-export async function POST(req: NextRequest) {
+export const POST = withAuth(async (req: Request) => {
   try {
     const form = await req.formData();
     const audio = form.get("audio");
@@ -33,16 +34,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message }, { status: upstream.status === 503 ? 503 : 502 });
     }
 
-    fs.mkdirSync(VOICE_OUT_DIR, { recursive: true });
+    const outDir = voiceDir();
     const fileName = `vc-${Date.now()}-${randomUUID().slice(0, 8)}.wav`;
-    const filePath = path.join(VOICE_OUT_DIR, fileName);
+    const filePath = path.join(outDir, fileName);
     const buffer = Buffer.from(await upstream.arrayBuffer());
     fs.writeFileSync(filePath, buffer);
 
     const sr = Number(upstream.headers.get("X-Audio-Sr") ?? 0);
     const duration = Number(upstream.headers.get("X-Audio-Duration") ?? 0);
     return NextResponse.json({
-      url: `/voice/${fileName}`,
+      url: voiceUrlPath(fileName),
       file: fileName,
       sizeMb: Math.round((buffer.length / 1024 / 1024) * 100) / 100,
       sr,
@@ -56,4 +57,4 @@ export async function POST(req: NextRequest) {
       { status: 502 }
     );
   }
-}
+});

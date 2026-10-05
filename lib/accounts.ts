@@ -1,13 +1,17 @@
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { getStore } from "./storage";
+import { dataDir } from "./userPaths";
 import type { PublicAccount } from "./clientTypes";
 
 /**
  * Saved Buffer accounts — one entry per personal API key pasted in the UI.
- * Stored server-side in data/accounts.json (gitignored); the raw access token
- * never leaves the server (the browser only ever sees `PublicAccount`).
+ * Stored server-side in data/users/<userId>/accounts.json (gitignored); the raw
+ * access token never leaves the server (the browser only ever sees
+ * `PublicAccount`).
+ *
+ * Per-user, not global: these are real credentials that can post to someone's
+ * social accounts, so one user must never see another's.
  *
  * While NO accounts are saved, BUFFER_ACCESS_TOKEN/BUFFER_ORGANIZATION_ID from
  * the environment show up as a fallback "Default" account (see README), so
@@ -21,7 +25,7 @@ export interface StoredAccount {
 }
 
 function accountsFile(): string {
-  return path.join(getStore().dir, "accounts.json");
+  return path.join(dataDir(), "accounts.json");
 }
 
 export function loadAccounts(): StoredAccount[] {
@@ -61,6 +65,15 @@ export function listAccounts(): StoredAccount[] {
   if (saved.length > 0) return saved;
   const fallback = envAccount();
   return fallback ? [fallback] : [];
+}
+
+/**
+ * Full account (with its real token) for SERVER-SIDE use only — never send this
+ * to the browser (use `toPublic`). Returns null when the id is unknown, e.g. a
+ * target referring to an account the user deleted.
+ */
+export async function getAccount(id: string): Promise<StoredAccount | null> {
+  return listAccounts().find((a) => a.id === id) ?? null;
 }
 
 /** Shape handed to the browser — no token field exists on purpose. */

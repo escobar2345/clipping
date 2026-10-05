@@ -29,14 +29,18 @@ interface GraphqlEnvelope<T> {
 }
 
 /** Minimal GraphQL caller: returns `data` or throws the first error message. */
-async function bufferGraphql<T>(token: string, query: string): Promise<T> {
+async function bufferGraphql<T>(
+  token: string,
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
   const res = await fetch(BUFFER_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(variables ? { query, variables } : { query }),
     cache: "no-store",
     signal: typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
       ? AbortSignal.timeout(BUFFER_TIMEOUT_MS)
@@ -117,4 +121,81 @@ export async function fetchBufferChannels(token: string, organizationId: string)
     service: String(c.service ?? "").toLowerCase(),
     displayName: c.displayName || c.name || String(c.service ?? ""),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// POSTING
+// ---------------------------------------------------------------------------
+
+export interface CreatePostArgs {
+  channelId: string;
+  text: string;
+  /** Omit for a plain text post (X/Twitter, …). Video channels need one. */
+  videoUrl?: string;
+  /** "queue" posts to the next open slot; "schedule" requires `dueAtIso`. */
+  mode: "queue" | "schedule";
+  dueAtIso?: string;
+  /** Per-service metadata passed straight through to Buffer's CreatePostInput
+   *  `metadata` field — e.g. { instagram: { type: "story",
+   *  shouldShareToFeed: false } } makes an Instagram channel publish to
+   *  Instagram Stories instead of the feed. Buffer validates it per service. */
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Creates one post through Buffer's GraphQL API. Throws with Buffer's own
+ * message on a MutationError so the UI can show the real reason (bad token,
+ * unconnected channel, unsupported media).
+ */
+export async function createPost(args: CreatePostArgs, accessToken: string) {
+  const mutation = `
+    mutation CreatePost($input: CreatePostInput!) {
+      createPost(input: $input) {
+        ... on PostActionSuccess {
+          post { id text dueAt assets { id mimeType } }
+        }
+        ... on MutationError {
+          message
+        }
+      }
+    }
+  `;
+
+  const input: Record<string, any> = {
+    text: args.text,
+    channelId: args.channelId,
+    schedulingType: "automatic",
+    mode: args.mode === "schedule" ? "customScheduled" : "addToQueue",
+    // REQUIRED non-null Boolean in the current schema — omitting it fails validation.
+    needsApproval: false,
+  };
+  // Assets only when a video is attached — an empty assets array fails
+  // validation for text-only posts.
+  if (args.videoUrl) {
+    input.assets = [{ video: { url: args.videoUrl } }];
+  }
+  if (args.mode === "schedule") {
+    if (!args.dueAtIso) throw new Error("dueAtIso is required when mode is 'schedule'");
+    input.dueAt = args.dueAtIso;
+  }
+  if (args.metadata) {
+    input.metadata = args.metadata;
+  }
+
+  const data = await bufferGraphql<{ createPost: any }>(accessToken, mutation, { input });
+
+  if (data.createPost?.message) {
+    // MutationError branch
+    throw new Error(data.createPost.message);
+  }
+  return data.createPost.post;
+}
+
+export interface CreateVideoPostArgs extends CreatePostArgs {
+  videoUrl: string;
+}
+
+/** Video-specific alias kept for callers that always attach a rendered clip. */
+export async function createVideoPost(args: CreateVideoPostArgs, accessToken: string) {
+  return createPost(args, accessToken);
 }

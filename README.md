@@ -261,11 +261,15 @@ shared hosted catalog endpoint.
 
 ## Known gaps to fill in for production
 
-- `lib/apify.ts` has placeholder field names (`item.transcript`, `item.videoUrl`, etc.) —
-  update these to match your chosen actor's actual output schema.
-- Video download: some Apify actors give you a direct playable/download URL; others don't.
-  If yours doesn't, add a download step (e.g. `yt-dlp`) before the video path is handed to
-  Remotion, since `OffthreadVideo` needs a URL or local file it can read.
+- `lib/apify.ts` coerces the common field-name variants actors use (`title`/`name`,
+  `duration`/`lengthSeconds`, `subtitles`/`transcript`/`captions`, …), but an unusual actor may
+  still need a field added to `mapItem()`. When it can't read the actor it falls back to
+  yt-dlp metadata + captions, and reports that in the `warnings` the UI shows you.
+- Video download is handled by **yt-dlp** (`lib/ytdlp.ts`), lazily at render time — analyze only
+  fetches metadata and captions. It must be on PATH (`pip install -U yt-dlp`), or set
+  `YTDLP_PATH` in `.env.local` to the binary. `YTDLP_FORMAT` overrides the video format
+  selector and `YTDLP_SUB_LANGS` the caption languages (default `en`). Because the file lands
+  in `public/uploads`, the host needs a writable disk — see the render route's note on Vercel.
 - Rendering is synchronous in `/api/render` today — for long videos/many clips, move this to
   a background job/queue (e.g. a worker process or `@remotion/lambda`) instead of blocking
   an API route.

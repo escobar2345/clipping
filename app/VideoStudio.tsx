@@ -6,6 +6,7 @@ import { editedDurationSec } from "../lib/timeline";
 import type { PublicAccount, AccountChannels, PostResponse, TunnelInfo } from "../lib/clientTypes";
 import type { ConfigStatus } from "../lib/config";
 import AccountsManager from "./components/AccountsManager";
+import AccountBar from "./components/AccountBar";
 import CaptionCoach from "./components/CaptionCoach";
 import AnalyticsPanel from "./components/AnalyticsPanel";
 import ChatPanel from "./components/ChatPanel";
@@ -297,8 +298,29 @@ export default function VideoStudio() {
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Request failed");
+
+      // Read text first, then parse. A missing route (or a 500) makes Next.js
+      // answer with an HTML page, and `res.json()` on that throws the useless
+      // `Unexpected token '<', "<!DOCTYPE "... is not valid JSON` — so we detect
+      // it here and say what actually went wrong.
+      const raw = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        const looksHtml = /^\s*(<!DOCTYPE|<html)/i.test(raw);
+        if (looksHtml) {
+          throw new Error(
+            res.status === 404
+              ? `${url} does not exist on the server (HTTP 404) — its route file is missing from this project.`
+              : `${url} returned an HTML page instead of JSON (HTTP ${res.status}). ` +
+                `The server crashed while handling the request — check the dev-server terminal for the real stack trace.`
+          );
+        }
+        throw new Error(`${url} sent a response that isn't JSON (HTTP ${res.status}).`);
+      }
+
+      if (!res.ok) throw new Error(data.error ?? `Request failed (HTTP ${res.status}).`);
       return data;
     } catch (e: any) {
       if (e?.name === "AbortError") {
@@ -652,6 +674,7 @@ export default function VideoStudio() {
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 20px", fontFamily: "system-ui, sans-serif" }}>
+      <AccountBar />
       <div style={{ marginBottom: 32 }}>
         <div style={{ color: ACCENT, fontSize: 12, letterSpacing: 2, fontWeight: 700, marginBottom: 6 }}>
           LONG2SHORT

@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { listAccounts } from "../../../../lib/accounts";
+import { withAuth } from "../../../../lib/withAuth";
 import { fetchBufferChannels, resolveBufferAccount } from "../../../../lib/buffer";
 import type { AccountChannels } from "../../../../lib/clientTypes";
 
 /**
- * Channels (social profiles) for every account the app can post through,
+ * Channels (social profiles) for every account THIS user can post through,
  * grouped per account for the posting UI. One account failing (revoked key,
  * Buffer down) only marks THAT account with an error — the rest still load.
  *
  * Response: { accounts: AccountChannels[] }
  */
-export async function GET() {
+export const GET = withAuth(async () => {
   const accounts = listAccounts();
 
   const results: AccountChannels[] = await Promise.all(
@@ -32,4 +33,4 @@ export async function GET() {
   );
 
   return NextResponse.json({ accounts: results });
-}
+});
