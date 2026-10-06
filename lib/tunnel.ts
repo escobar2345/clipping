@@ -108,6 +108,12 @@ function rememberedOrigin(): string | null {
   return (globalThis as any).__l2sPublicOrigin ?? null;
 }
 
+/** The public origin learned from live request Hosts, if any. Exported for
+ *  the /api/health diagnostics endpoint. */
+export function publicOrigin(): string | null {
+  return rememberedOrigin();
+}
+
 function stripTrailingSlash(u: string): string {
   return u.replace(/\/+$/, "");
 }

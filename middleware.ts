@@ -22,7 +22,7 @@ function isPublicPage(pathname: string): boolean {
  * by re-verifying every transaction with Paystack's API (see the route), so it
  * needs no cookie and must never trust the request body on its own.
  */
-const PUBLIC_API = ["/api/billing/webhook"];
+const PUBLIC_API = ["/api/billing/webhook", "/api/health"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
