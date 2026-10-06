@@ -1,51 +1,102 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Extracts evenly-spaced frames from a video as base64 data URIs using ffmpeg.
+ * Extracts `count` evenly-spaced JPEG frames from a video file/URL and
+ * returns them as base64 data URIs, ready to drop into an OpenAI-style
+ * `image_url` content block. Requires ffmpeg to be installed and on PATH.
  *
- * Used for vision-based style extraction: each frame is sent individually to
- * a vision-capable model on build.nvidia.com (the hosted endpoint accepts
- * at most 1 image per request).
- *
- * @param videoPath   Path to the local video file.
- * @param durationSec Total duration of the video in seconds.
- * @param frameCount  How many frames to extract (default 8).
- * @returns Data URIs like "data:image/jpeg;base64,/9j/...".
+ * Note: this pulls frames rather than sending raw video, because the
+ * hosted build.nvidia.com chat/completions endpoint takes images
+ * (`image_url` blocks), not a video stream — see README for details.
  */
 export async function extractFramesAsDataUris(
   videoPath: string,
   durationSec: number,
-  frameCount: number = 8
+  count = 8
 ): Promise<string[]> {
-  // Stub: full implementation uses ffmpeg to extract frames at even
-  // intervals and base64-encode them as data URIs.
-  // Returns an empty array so vision-based style extraction produces
-  // no frame analysis (text-only path still works).
-  return [];
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "frames-"));
+  const uris: string[] = [];
+
+  try {
+    const step = Math.max(durationSec / (count + 1), 0.5);
+    for (let i = 1; i <= count; i++) {
+      const t = (step * i).toFixed(2);
+      const outFile = path.join(tmpDir, `frame-${i}.jpg`);
+      await execFileAsync("ffmpeg", [
+        "-ss", t,
+        "-i", videoPath,
+        "-frames:v", "1",
+        "-q:v", "3",
+        "-y",
+        outFile,
+      ]);
+      const buf = fs.readFileSync(outFile);
+      uris.push(`data:image/jpeg;base64,${buf.toString("base64")}`);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  return uris;
+}
+
+/** Helper: extraction of frames at *specific* times.
+ *  Returns frames as JPEG data URIs (scaled down to maxWidth to keep the
+ *  vision-model payload light). Times should already be sanity-checked. */
+export async function extractFramesAtTimes(
+  videoPath: string,
+  times: number[],
+  maxWidth = 640
+): Promise<{ atSec: number; dataUri: string }[]> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "frames-at-"));
+  const out: { atSec: number; dataUri: string }[] = [];
+  try {
+    for (const t of times) {
+      const outFile = path.join(tmpDir, `f-${t.toFixed(2)}.jpg`);
+      try {
+        await execFileAsync(
+          "ffmpeg",
+          [
+            "-ss", t.toFixed(3),
+            "-i", videoPath,
+            "-frames:v", "1",
+            "-vf", `scale=${maxWidth}:-2`,
+            "-q:v", "4",
+            "-y", outFile,
+          ],
+          { timeout: 20_000, windowsHide: true }
+        );
+        const buf = fs.readFileSync(outFile);
+        out.push({ atSec: t, dataUri: `data:image/jpeg;base64,${buf.toString("base64")}` });
+      } catch {
+        // skip frames that can't be extracted
+      }
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+  return out;
 }
 
 /**
- * A video's duration in seconds, read with ffprobe (ships with ffmpeg).
- * Used for uploaded files that never went through Apify, so their duration
- * isn't already known. Returns 0 when the duration can't be read.
+ * Returns a video's duration in seconds using ffprobe. Used to evenly space
+ * sampled frames when the duration isn't already known — e.g. an uploaded
+ * reference clip that never went through Apify. Requires ffprobe on PATH
+ * (it ships with ffmpeg). Returns 0 if the duration can't be read.
  */
 export async function getVideoDurationSec(videoPath: string): Promise<number> {
-  try {
-    const { stdout } = await execFileAsync("ffprobe", [
-      "-v",
-      "error",
-      "-show_entries",
-      "format=duration",
-      "-of",
-      "default=noprint_wrappers=1:nokey=1",
-      videoPath,
-    ]);
-    const dur = parseFloat(String(stdout).trim());
-    return Number.isFinite(dur) ? dur : 0;
-  } catch {
-    return 0; // ffprobe missing or file unreadable — callers fall back
-  }
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    videoPath,
+  ]);
+  const dur = parseFloat(stdout.trim());
+  return Number.isFinite(dur) ? dur : 0;
 }

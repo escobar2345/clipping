@@ -123,6 +123,13 @@ export async function fetchBufferChannels(token: string, organizationId: string)
   }));
 }
 
+/**
+ * Alias the chat assistant's channel directory imports (lib/chat.ts). Same
+ * query and code path as fetchBufferChannels — one Buffer read whether the
+ * posting UI or the copilot asks for the channel list.
+ */
+export const listChannels = fetchBufferChannels;
+
 // ---------------------------------------------------------------------------
 // POSTING
 // ---------------------------------------------------------------------------

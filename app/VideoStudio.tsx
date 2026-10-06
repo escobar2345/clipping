@@ -672,6 +672,90 @@ export default function VideoStudio() {
     }
   }
 
+  // ----- Chat copilot wiring -------------------------------------------------
+  // The copilot chats with the model AND can drive this page. chatPageState is
+  // the full state used to enrich the model's proposed actions; chatPromptContext
+  // is the light summary sent with each message so the model knows what's on screen.
+
+  const chatPageState = {
+    intel,
+    rules: {
+      instructions: rulesText,
+      targetClipCount,
+      minClipSec: minSec,
+      maxClipSec: maxSec,
+      targetPlatforms: ["tiktok", "instagram_reels", "youtube_shorts"],
+      aspect: "9:16" as const,
+    },
+    styleProfile,
+    editPlan,
+    renderedUrls,
+    captions: caption,
+    systemPrompt,
+    accountChannels,
+  };
+
+  const chatPromptContext = {
+    configMissing: (configStatus?.missing ?? []).map((m: any) => m.key),
+    video: intel
+      ? {
+          title: intel.title,
+          durationSec: intel.durationSec,
+          sourceUrl: intel.sourceUrl || null,
+          hasFile: Boolean(intel.videoFilePath),
+          transcriptWords: intel.transcript?.length ?? 0,
+        }
+      : null,
+    rules: {
+      instructions: rulesText,
+      targetClipCount,
+      minClipSec: minSec,
+      maxClipSec: maxSec,
+      targetPlatforms: ["tiktok", "instagram_reels", "youtube_shorts"],
+    },
+    styleProfileLoaded: Boolean(styleProfile),
+    editPlan: editPlan
+      ? {
+          clips: editPlan.clips.map((c, i) => ({
+            clipIndex: i,
+            clipId: c.clipId,
+            hookTitle: c.hookTitle,
+            startSec: c.sourceStartSec,
+            endSec: c.sourceEndSec,
+          })),
+          rendered: editPlan.clips.map((_, i) => renderedUrls[i] ?? null),
+          captionsDrafted: editPlan.clips.map((_, i) => caption[i] ?? null),
+        }
+      : null,
+    accounts: accountChannels.map((a) => ({
+      accountId: a.account.id,
+      accountName: a.account.name,
+      channels: (a.channels ?? []).map((c) => ({
+        channelId: c.id,
+        service: c.service,
+        displayName: c.displayName,
+      })),
+    })),
+    storedUploads: storedUploads.map((u) => u.file),
+    renderedFiles: existingRenders.map((r) => ({
+      file: r.file,
+      sourceUrl: r.sourceUrl ?? null,
+    })),
+  };
+
+  /** Merges a chat-executed action's server state patch into the page UI. */
+  function applyStatePatch(patch: any) {
+    if (!patch) return;
+    if (patch.intel !== undefined) setIntel(patch.intel);
+    if (patch.filePending !== undefined) setFilePending(patch.filePending);
+    if (patch.editPlan !== undefined) setEditPlan(patch.editPlan);
+    if (patch.renderedUrls) setRenderedUrls((prev) => ({ ...prev, ...patch.renderedUrls }));
+    if (patch.captions) setCaption((prev) => ({ ...prev, ...patch.captions }));
+    if (patch.postResult) setPostResult((prev) => ({ ...prev, ...patch.postResult }));
+    if (patch.refreshRenders) refreshRenders();
+    if (patch.refreshUploads) refreshUploads();
+  }
+
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 20px", fontFamily: "system-ui, sans-serif" }}>
       <AccountBar />
@@ -1261,8 +1345,13 @@ export default function VideoStudio() {
       {/* Per-account Buffer analytics + AI growth advice */}
       <AnalyticsPanel accounts={savedAccounts} />
 
-      {/* Floating chat assistant — propose-only until you Confirm */}
-      <ChatPanel />
+      {/* Floating chat copilot — drives the whole page. With "Auto-run" ON
+          (default) it edits and posts on its own, no Confirm click. */}
+      <ChatPanel
+        pageState={chatPageState}
+        promptContext={chatPromptContext}
+        onStatePatch={applyStatePatch}
+      />
     </main>
   );
 }

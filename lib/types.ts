@@ -134,6 +134,27 @@ export interface EditPlan {
    *  clip captions are already Deepgram-timed, so rendering doesn't call it
    *  again for each clip. */
   transcriptSource?: "captions" | "deepgram" | "none";
+  /** AI-generated assets from Higgsfield MCP (B-roll, images, effects) */
+  generatedAssets?: GeneratedAsset[];
+}
+
+export interface GeneratedAsset {
+  /** Unique ID, e.g. "gf-clip-1-broll" */
+  assetId: string;
+  /** What kind of media */
+  type: "video" | "image";
+  /** URL to the generated media (remote, downloaded at render time) */
+  url: string;
+  /** What was asked Higgsfield to generate */
+  prompt: string;
+  /** Which Higgsfield tool was called */
+  toolUsed: string;
+  /** Which source clip this asset enhances */
+  clipIndex?: number;
+  /** Purpose of this asset in the edit */
+  purpose: "broll" | "background" | "overlay" | "effect" | "upscale";
+  /** Local path after download (populated at render time) */
+  localPath?: string;
 }
 
 export interface FrameNote {

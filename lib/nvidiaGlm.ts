@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+﻿import OpenAI from "openai";
 import type {
   VideoIntel,
   StyleProfile,
@@ -9,13 +9,13 @@ import type {
   VisualContext,
 } from "./types";
 import { extractFramesAsDataUris } from "./ffmpegFrames";
-import { snapToSceneCuts } from "./visualScan";
+import { snapToSceneCuts, detectSceneCuts } from "./visualScan";
+import { withRetry } from "./retry";
 import { DEFAULT_EDIT_SYSTEM_PROMPT } from "./prompts";
-import { normalizeClips } from "./planNormalize";
 
 // build.nvidia.com exposes GLM (and many other) models behind an
 // OpenAI-compatible /v1/chat/completions endpoint, so the official `openai`
-// SDK works as-is — just point baseURL at NVIDIA and use your NVIDIA key.
+// SDK works as-is â€” just point baseURL at NVIDIA and use your NVIDIA key.
 //
 // The client is created LAZILY (on first call) instead of at module scope:
 // eagerly constructing OpenAI with an empty key throws, which used to crash
@@ -37,7 +37,7 @@ function glmClient(): OpenAI {
 }
 
 // The default system prompt lives in lib/prompts.ts (DEFAULT_EDIT_SYSTEM_PROMPT)
-// and can be overridden per-run — generateEditPlan takes an optional
+// and can be overridden per-run â€” generateEditPlan takes an optional
 // systemPrompt argument that the UI (and the /api/edit-plan route) supplies.
 
 export async function generateEditPlan(
@@ -45,18 +45,19 @@ export async function generateEditPlan(
   rules: EditRules,
   styleProfile?: StyleProfile,
   systemPrompt?: string,
-  visualContext?: VisualContext | null
+  visualContext?: VisualContext | null,
+  targetPlatforms?: string[]
 ): Promise<EditPlan> {
   if (!process.env.NVIDIA_API_KEY) {
     throw new Error(
-      "NVIDIA_API_KEY is not set in your environment — get a key at build.nvidia.com"
+      "NVIDIA_API_KEY is not set in your environment â€” get a key at build.nvidia.com"
     );
   }
 
-  // No transcript? (music-only compilations etc. — the scraper returns
+  // No transcript? (music-only compilations etc. â€” the scraper returns
   // subtitles: null). There are no spoken lines to quote, so GLM cannot pick
   // "the strongest line". Fall back to cut-aligned visual windows and let GLM
-  // only name the hooks — see buildVisualPlan below.
+  // only name the hooks â€” see buildVisualPlan below.
   if (!intel.transcript?.length) {
     return buildVisualPlan(intel, rules, visualContext);
   }
@@ -66,6 +67,7 @@ export async function generateEditPlan(
     durationSec: intel.durationSec,
     transcript: intel.transcript,
     rules,
+    targetPlatforms: targetPlatforms ?? null,
     styleProfile: styleProfile ?? null,
     // Visual intelligence extracted from the actual video file (optional):
     // exact scene-cut timestamps + vision-model notes per sampled frame.
@@ -78,7 +80,7 @@ export async function generateEditPlan(
   };
 
   const completion = await glmClient().chat.completions.create({
-    model: process.env.NVIDIA_GLM_MODEL ?? "deepseek-ai/deepseek-v4-pro-0813",
+    model: process.env.NVIDIA_GLM_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b",
     temperature: 0.4,
     messages: [
       { role: "system", content: systemPrompt?.trim() || DEFAULT_EDIT_SYSTEM_PROMPT },
@@ -89,34 +91,17 @@ export async function generateEditPlan(
   const raw = completion.choices[0]?.message?.content ?? "{}";
   const cleaned = raw.replace(/```json|```/g, "").trim();
 
-  let parsed: any;
+  let parsed: Omit<EditPlan, "sourceVideoPath">;
   try {
     parsed = JSON.parse(cleaned);
   } catch (err) {
     throw new Error(`GLM did not return valid JSON edit plan: ${String(err)}`);
   }
 
-  // Never hand the renderer raw model output: validate it, fix the time base,
-  // snap to word boundaries, enforce min/max length, rebuild captions from the
-  // real transcript. See lib/planNormalize.ts.
-  const { clips, warnings } = normalizeClips(
-    Array.isArray(parsed) ? parsed : parsed?.clips,
-    intel,
-    rules
-  );
-  if (!clips.length) {
-    throw new Error(
-      "The model's edit plan had no usable clips" +
-        (warnings.length ? ` (${warnings.join(" ")})` : "") +
-        ". Try again or loosen the rules."
-    );
-  }
-
   return {
     sourceVideoPath: intel.videoFilePath,
     sourceUrl: intel.sourceUrl,
-    clips,
-    warnings,
+    clips: parsed.clips ?? [],
   };
 }
 
@@ -124,12 +109,12 @@ export async function generateEditPlan(
  * Builds a StyleProfile from a reference/sample video's own VideoIntel by
  * asking GLM to describe its cutting rhythm and caption style in the
  * structured shape Remotion + the edit-plan prompt expect. This is the
- * text-based stand-in for "watch this video and copy its technique" —
+ * text-based stand-in for "watch this video and copy its technique" â€”
  * see the note in lib/types.ts.
  */
 export async function extractStyleProfile(sampleIntel: VideoIntel): Promise<StyleProfile> {
   const completion = await glmClient().chat.completions.create({
-    model: process.env.NVIDIA_GLM_MODEL ?? "deepseek-ai/deepseek-v4-pro-0813",
+    model: process.env.NVIDIA_GLM_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b",
     temperature: 0.2,
     messages: [
       {
@@ -163,16 +148,20 @@ type StyleProfile = {
  * Vision-based version of extractStyleProfile: actually looks at frames
  * pulled from the sample video (via ffmpeg) instead of only inferring style
  * from transcript/scene-cut timestamps. Use this once you have access to a
- * vision-capable model on build.nvidia.com — set NVIDIA_VISION_MODEL to its
+ * vision-capable model on build.nvidia.com â€” set NVIDIA_VISION_MODEL to its
  * exact catalog ID (e.g. "meta/llama-3.2-11b-vision-instruct",
- * "nvidia/llama-3.1-nemotron-nano-vl-8b-v1", or a Qwen-VL variant — check
+ * "nvidia/llama-3.1-nemotron-nano-vl-8b-v1", or a Qwen-VL variant â€” check
  * build.nvidia.com/models for what's currently available and confirm the ID
  * on the model's own page, since the catalog changes over time).
  *
- * This sends still frames, not raw video: the hosted chat/completions
- * endpoint takes `image_url` content blocks, and reliable raw-video input
- * is documented for self-hosted NIM containers with video input explicitly
- * enabled, not confirmed for the shared hosted endpoint.
+ * IMPORTANT: hosted build.nvidia.com vision endpoints accept AT MOST ONE
+ * image per prompt â€” putting all frames into one request answers 400
+ * "At most 1 image(s) may be provided in one prompt". So every frame is
+ * described in its OWN request (one image each, batched concurrently with a
+ * hard deadline, per-frame best-effort â€” same pattern as the frame scanner in
+ * lib/visualScan.ts), and the per-frame JSON observations are merged here
+ * into one StyleProfile. Cut pacing is MEASURED with ffmpeg's scene detector
+ * instead of guessed from stills.
  */
 export async function extractStyleProfileVision(
   sampleIntel: VideoIntel,
@@ -182,7 +171,7 @@ export async function extractStyleProfileVision(
     process.env.NVIDIA_VISION_MODEL || "meta/llama-3.2-11b-vision-instruct";
   if (!process.env.NVIDIA_API_KEY) {
     throw new Error(
-      "NVIDIA_API_KEY is not set — pick a vision-capable model ID on build.nvidia.com"
+      "NVIDIA_API_KEY is not set â€” pick a vision-capable model ID on build.nvidia.com"
     );
   }
 
@@ -191,45 +180,196 @@ export async function extractStyleProfileVision(
     sampleIntel.durationSec,
     frameCount
   );
+  if (!frames.length) {
+    throw new Error("ffmpeg extracted no frames from the sample video");
+  }
 
-  const completion = await glmClient().chat.completions.create({
-    model: visionModel,
-    temperature: 0.2,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `These are evenly-spaced frames sampled across a short-form
-video, in chronological order. Look at caption placement/style, framing,
-zoom/crop choices, and overall pacing implied by what's visible across the
-frames. Respond with ONLY valid JSON matching:
-type StyleProfile = {
-  avgCutLengthSec: number;
-  captionStyle: { position: "bottom"|"center"|"top"; wordsPerCaption: number; highlightActiveWord: boolean; fontHint: string };
-  zoomRhythm: { zoomEverySec: number; zoomIntensity: number };
-  notes: string;
-};
-Video duration is ${sampleIntel.durationSec} seconds. Use the notes field for
-anything about visual style (font look, color, caption boxes, transitions)
-that doesn't fit the other fields.`,
-          },
-          ...frames.map((url) => ({
-            type: "image_url" as const,
-            image_url: { url },
-          })),
-        ],
-      },
-    ],
-  });
+  // Real cut pacing: ffmpeg's scene detector over the whole sample (stills
+  // alone can't show pacing). Best-effort â€” neutral fallback if it fails.
+  let sceneCuts: number[] = [];
+  try {
+    sceneCuts = await detectSceneCuts(sampleIntel.videoFilePath);
+  } catch {
+    sceneCuts = [];
+  }
+  const dur = sampleIntel.durationSec > 0 ? sampleIntel.durationSec : 30;
+  const avgCutLengthSec =
+    sceneCuts.length > 0
+      ? +(dur / (sceneCuts.length + 1)).toFixed(2)
+      : +(dur / (frames.length + 1)).toFixed(2);
 
-  const raw = completion.choices[0]?.message?.content ?? "{}";
-  return JSON.parse(raw.replace(/```json|```/g, "").trim());
+  interface FrameStyle {
+    captionPosition: "bottom" | "center" | "top" | "none";
+    wordsPerCaption: number;
+    highlightActiveWord: boolean;
+    fontHint: string;
+    framing: string;
+    zoomHint: string;
+    notes: string;
+  }
+
+  // ONE image per request â€” the hosted endpoint's hard limit.
+  async function describeFrame(
+    dataUri: string,
+    index: number
+  ): Promise<FrameStyle | null> {
+    try {
+      const completion = await withRetry(
+        () =>
+          glmClient().chat.completions.create({
+            model: visionModel,
+            temperature: 0.2,
+            max_tokens: 400,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `This is frame ${index + 1} of ${frames.length}, sampled evenly across a short-form video (${dur}s total). Describe only the editing style visible in THIS single frame. Respond with ONLY valid JSON:
+{"captionPosition":"bottom|center|top|none","captionText":"visible caption text or empty","wordsPerCaption":0,"highlightActiveWord":false,"fontHint":"font/color/box description or empty","framing":"wide|medium|close","zoomHint":"static|push-in|pull-out|unclear","notes":"one short sentence on visual style"}`,
+                  },
+                  { type: "image_url", image_url: { url: dataUri } },
+                ],
+              },
+            ],
+          }),
+        1
+      );
+      const raw = (completion.choices[0]?.message?.content ?? "").replace(
+        /```json|```/g,
+        ""
+      );
+      let obj: any = null;
+      try {
+        obj = JSON.parse(raw.trim());
+      } catch {
+        const m = raw.match(/\{[\s\S]*\}/);
+        if (m) obj = JSON.parse(m[0]);
+      }
+      if (!obj || typeof obj !== "object") return null;
+      const pos = String(obj.captionPosition ?? "none").toLowerCase();
+      return {
+        captionPosition: (["bottom", "center", "top"].includes(pos)
+          ? pos
+          : "none") as FrameStyle["captionPosition"],
+        wordsPerCaption: Math.max(
+          0,
+          Math.round(Number(obj.wordsPerCaption) || 0)
+        ),
+        highlightActiveWord: Boolean(obj.highlightActiveWord),
+        fontHint: String(obj.fontHint ?? "").slice(0, 120),
+        framing: String(obj.framing ?? "").toLowerCase().slice(0, 20),
+        zoomHint: String(obj.zoomHint ?? "unclear").toLowerCase().slice(0, 20),
+        notes: String(obj.notes ?? "").slice(0, 300),
+      };
+    } catch {
+      return null; // per-frame best-effort
+    }
+  }
+
+  // Bounded batches of 3 with a hard deadline: whatever descriptions arrive
+  // before the deadline are used (mirrors lib/visualScan.ts).
+  const results: (FrameStyle | null)[] = new Array(frames.length).fill(null);
+  const DEADLINE_MS = 90_000;
+  const startedAt = Date.now();
+  let cursor = 0;
+  while (cursor < frames.length) {
+    const remaining = DEADLINE_MS - (Date.now() - startedAt);
+    if (remaining <= 0) break;
+    const batch = frames
+      .slice(cursor, cursor + 3)
+      .map((uri, j) => ({ uri, idx: cursor + j }));
+    cursor += batch.length;
+    await Promise.race([
+      Promise.all(
+        batch.map(({ uri, idx }) =>
+          describeFrame(uri, idx).then((r) => {
+            results[idx] = r;
+          })
+        )
+      ),
+      new Promise<void>((resolve) => setTimeout(resolve, remaining + 1)),
+    ]);
+  }
+
+  const got = results.filter(Boolean) as FrameStyle[];
+  if (!got.length) {
+    throw new Error(
+      `The vision model "${visionModel}" returned nothing usable for any of the ` +
+        `${frames.length} frames. Confirm NVIDIA_VISION_MODEL in .env.local is a ` +
+        `vision-capable chat model on build.nvidia.com/models.`
+    );
+  }
+
+  // Deterministic merge of per-frame observations into the StyleProfile.
+  const mostCommon = (vals: string[]): string | undefined => {
+    const counts = new Map<string, number>();
+    for (const v of vals) counts.set(v, (counts.get(v) ?? 0) + 1);
+    let best: string | undefined;
+    let bestN = 0;
+    for (const [v, n] of counts) {
+      if (n > bestN) {
+        best = v;
+        bestN = n;
+      }
+    }
+    return best;
+  };
+
+  const captioned = got.filter((f) => f.captionPosition !== "none");
+  const position = mostCommon(captioned.map((f) => f.captionPosition)) as
+    | StyleProfile["captionStyle"]["position"]
+    | undefined;
+  const wordCounts = captioned
+    .map((f) => f.wordsPerCaption)
+    .filter((n) => n > 0);
+  const uniqueFonts = Array.from(
+    new Set(got.map((f) => f.fontHint).filter(Boolean))
+  ).slice(0, 3);
+  const zoomPushes = got.filter((f) => f.zoomHint === "push-in").length;
+  const framingChanges = got.filter(
+    (f, i) => i > 0 && f.framing && got[i - 1].framing && f.framing !== got[i - 1].framing
+  ).length;
+
+  return {
+    avgCutLengthSec,
+    captionStyle: {
+      position: position ?? "bottom",
+      wordsPerCaption: wordCounts.length
+        ? Math.max(
+            1,
+            Math.round(wordCounts.reduce((a, b) => a + b, 0) / wordCounts.length)
+          )
+        : 4,
+      highlightActiveWord:
+        got.filter((f) => f.highlightActiveWord).length > got.length / 2,
+      fontHint: uniqueFonts.join("; ").slice(0, 120),
+    },
+    zoomRhythm: {
+      // Punch-ins typically land on cuts, so reuse the measured cut pace.
+      zoomEverySec: +avgCutLengthSec.toFixed(1),
+      // Subtle by default; nudged up when frames suggest push-ins or big
+      // framing swings (intensity can't be measured from stills perfectly).
+      zoomIntensity: Math.min(
+        0.6,
+        0.1 + (zoomPushes > 0 ? 0.1 : 0) + (framingChanges > 1 ? 0.1 : 0)
+      ),
+    },
+    notes:
+      `Vision pass: ${got.length}/${frames.length} frames described ` +
+      `one-per-prompt; ${captioned.length} showed captions. ` +
+      got
+        .map((f) => f.notes)
+        .filter(Boolean)
+        .slice(0, 5)
+        .join(" ")
+        .slice(0, 600),
+  };
 }
 
 /**
- * Fallback edit plan for videos with NO transcript (captions: null — e.g.
+ * Fallback edit plan for videos with NO transcript (captions: null â€” e.g.
  * music-only sports highlight reels). The creator's rules are all about
  * picking the strongest spoken lines, which is impossible without captions,
  * so:
@@ -298,7 +438,7 @@ async function buildVisualPlan(
     }
   }
 
-  // Fallback: no / too few visual windows → even spread.
+  // Fallback: no / too few visual windows â†’ even spread.
   if (windows.length < count) {
     const usable = Math.max(dur - span, 1);
     for (let i = 0; i < count; i++) {
@@ -327,7 +467,7 @@ async function buildVisualPlan(
   // Hook titles: GLM names each window punchily from the video title alone.
   try {
     const completion = await glmClient().chat.completions.create({
-      model: process.env.NVIDIA_GLM_MODEL ?? "deepseek-ai/deepseek-v4-pro-0813",
+      model: process.env.NVIDIA_GLM_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b",
       temperature: 0.6,
       messages: [
         {
@@ -360,7 +500,7 @@ async function buildVisualPlan(
       });
     }
   } catch {
-    // network blip etc — the deterministic fallback titles below still apply
+    // network blip etc â€” the deterministic fallback titles below still apply
   }
 
   clips.forEach((c, i) => {
