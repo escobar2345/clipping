@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "./authContext";
 import { runAsUser } from "./userPaths";
 import { isPaid, getSubscription, remainingVideoQuota } from "./billing";
+import { rememberPublicOrigin } from "./tunnel";
 
 /**
  * Wraps an API route handler with everything a request needs:
@@ -31,6 +32,11 @@ export function withAuth<Ctx = unknown>(
 ): (req: Request) => Promise<Response> {
   return async (req: Request) => {
     try {
+      // Learn the public origin this deployment is reachable at (Railway's
+      // domain etc.) from the request's own Host — used for Paystack callbacks
+      // and Buffer fetch URLs without needing NEXT_PUBLIC_BASE_URL set.
+      rememberPublicOrigin(req.url);
+
       const auth = await requireAuth();
 
       if (options.plan === "paid") {

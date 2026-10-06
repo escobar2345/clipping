@@ -52,7 +52,7 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 /** A base URL that is meaningful for Buffer: resolvable from the internet. */
-function isPublicBaseUrl(raw: string | undefined | null): boolean {
+export function isPublicBaseUrl(raw: string | undefined | null): boolean {
   if (!raw) return false;
   try {
     const u = new URL(raw.trim());
@@ -63,6 +63,49 @@ function isPublicBaseUrl(raw: string | undefined | null): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * True when running on a hosted service (Railway first — any RAILWAY_* var is
+ * set on every deploy — plus the other common platforms) instead of a dev
+ * machine. On a deployment ngrok is NEVER spawned or suggested: there is no
+ * binary there, and a live user should never see localhost instructions.
+ */
+export const DEPLOYED_HOST = !!(
+  process.env.RAILWAY_ENVIRONMENT ||
+  process.env.RAILWAY_ENVIRONMENT_ID ||
+  process.env.RAILWAY_ENVIRONMENT_NAME ||
+  process.env.RAILWAY_PROJECT_ID ||
+  process.env.RAILWAY_SERVICE_ID ||
+  process.env.RAILWAY_DEPLOYMENT_ID ||
+  process.env.FLY_APP_NAME ||
+  process.env.RENDER ||
+  process.env.VERCEL
+);
+
+/**
+ * The public origin this deployment is actually reachable at, learned from the
+ * Host header of real incoming requests. Railway gives every deploy its own
+ * domain and sets no env var for it, so asking the traffic itself is the only
+ * reliable way to know it without configuration. Stored on globalThis so every
+ * route bundle in the process shares it.
+ */
+export function rememberPublicOrigin(rawUrl: string): void {
+  try {
+    const origin = new URL(rawUrl).origin;
+    const host = new URL(rawUrl).hostname;
+    // Only remember real, dot-bearing domains (xxx.up.railway.app) — bare
+    // internal hostnames must never be handed to Paystack or Buffer.
+    if (isPublicBaseUrl(origin) && host.includes(".") && !host.endsWith(".internal")) {
+      (globalThis as any).__l2sPublicOrigin = stripTrailingSlash(origin);
+    }
+  } catch {
+    /* not a parseable URL — ignore */
+  }
+}
+
+function rememberedOrigin(): string | null {
+  return (globalThis as any).__l2sPublicOrigin ?? null;
 }
 
 function stripTrailingSlash(u: string): string {
@@ -348,9 +391,30 @@ export async function getPublicBaseUrl(renderedPath?: string): Promise<string> {
       return base;
     }
     // Env URL is set but the video does not answer through it (dead domain,
-    // or a deployed copy that doesn't have THIS render) → fall through to ngrok.
+    // or a deployed copy that doesn't have THIS render) → fall through.
     console.warn(
-      "[tunnel] NEXT_PUBLIC_BASE_URL is set but the video did not answer through it — falling back to ngrok"
+      "[tunnel] NEXT_PUBLIC_BASE_URL is set but the video did not answer through it" +
+        (DEPLOYED_HOST ? "" : " — falling back to ngrok")
+    );
+    // On a live deployment there is no ngrok to fall back to — the configured
+    // domain is still the best (only) answer, and the post will tell us if
+    // Buffer genuinely can't fetch it.
+    if (DEPLOYED_HOST) return base;
+  }
+
+  // Domain learned from real request Hosts — the normal path on a deployment
+  // (e.g. Railway) where NEXT_PUBLIC_BASE_URL was never set.
+  const origin = rememberedOrigin();
+  if (origin) return origin;
+
+  // Never reach the ngrok path on a server: no binary, no terminal, and the
+  // error would be nonsense to a live user.
+  if (DEPLOYED_HOST) {
+    throw new Error(
+      "No public URL for this deployment. Set NEXT_PUBLIC_BASE_URL to this " +
+        "app's public domain in your host's environment variables " +
+        "(Railway → service → Variables). ngrok tunnels are only used for " +
+        "local development."
     );
   }
 
@@ -381,6 +445,24 @@ export async function tunnelStatus(): Promise<TunnelStatus> {
   const envUrl = process.env.NEXT_PUBLIC_BASE_URL?.trim();
   if (isPublicBaseUrl(envUrl)) {
     return { mode: "env", url: stripTrailingSlash(envUrl!) };
+  }
+
+  // Live deployment with no env var set: report the domain real requests
+  // arrive on (Railway's own). Never mention ngrok/localhost to live users —
+  // tunnels are a local-dev mechanism only.
+  const origin = rememberedOrigin();
+  if (origin) {
+    return { mode: "env", url: origin };
+  }
+
+  if (DEPLOYED_HOST) {
+    return {
+      mode: "none",
+      url: null,
+      note:
+        "No public URL configured yet. Set NEXT_PUBLIC_BASE_URL to this " +
+        "app's public domain so Buffer can fetch rendered videos.",
+    };
   }
 
   const port = appPort();

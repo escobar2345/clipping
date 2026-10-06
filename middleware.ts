@@ -11,6 +11,10 @@ import { createServerClient } from "@supabase/ssr";
  */ 
 const PUBLIC_PAGES = ["/login", "/signup", "/auth/callback"];
 
+function isPublicPage(pathname: string): boolean {
+  return PUBLIC_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 /**
  * Endpoints that must stay reachable with NO session. The Paystack webhook
  * calls in from Paystack's servers, which obviously have no Supabase cookie —
@@ -28,9 +32,31 @@ export async function middleware(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // Supabase not configured yet — let the app boot so the user can see the
-  // setup error instead of a redirect loop.
-  if (!url || !anonKey) return response;
+  // Supabase not configured yet — treat everyone as signed out EXCEPT on the
+  // login/signup/callback pages themselves (which must stay reachable so the
+  // user can see the setup error there). This guarantees no visitor ever lands
+  // on the studio as "Not signed in": it's either login, signup, or the app.
+  if (!url || !anonKey) {
+    if (isPublicPage(pathname)) return response;
+    if (pathname.startsWith("/api")) {
+      return NextResponse.json(
+        {
+          error:
+            "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and " +
+            "NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local (see " +
+            ".env.local.example) and restart the dev server.",
+        },
+        { status: 500 }
+      );
+    }
+    const redirect = request.nextUrl.clone();
+    redirect.pathname = "/login";
+    redirect.searchParams.set(
+      "error",
+      "Supabase is not configured. Add your keys to .env.local and restart the server."
+    );
+    return NextResponse.redirect(redirect);
+  }
 
   const supabase = createServerClient(url, anonKey, {
     cookies: {
@@ -54,12 +80,11 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isPublic = PUBLIC_PAGES.some((p) => pathname.startsWith(p));
-  const isApi = pathname.startsWith("/api");
-  const isPublicApi = PUBLIC_API.some((p) => pathname.startsWith(p));
+  const isPublic = isPublicPage(pathname);
+  const isPublicApi = PUBLIC_API.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   if (!user && !isPublic && !isPublicApi) {
-    if (isApi) {
+    if (pathname.startsWith("/api")) {
       // Keep the API contract JSON-only — never redirect a fetch to HTML.
       return NextResponse.json(
         { error: "You must be signed in to use this endpoint." },
@@ -83,12 +108,7 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+// Runs on everything except Next's build output — new pages are protected by default.
 export const config = {
-  matcher: [
-    /*
-     * Everything except Next's build output, static files and image assets.
-     * Keeping it broad means a newly added page is protected by default.
-     */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

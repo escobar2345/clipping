@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { requireAuth } from "../../../../lib/authContext";
 import { getPlan, initializeTransaction } from "../../../../lib/paystack";
+import { isPublicBaseUrl } from "../../../../lib/tunnel";
 
 /**
  * Starts a Paystack checkout for a plan.
@@ -31,9 +32,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Choose a paid plan." }, { status: 400 });
     }
 
-    const origin =
-      process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/+$/, "") ||
-      new URL(req.url).origin;
+    // Prefer the configured public domain; when it's missing or still points
+    // at localhost (e.g. Railway deploys never receive .env.local), fall back
+    // to THIS request's origin — on a live deployment that's the real domain
+    // Paystack must send the browser back to. Never hand Paystack a loopback
+    // callback URL from a public request.
+    const envUrl = process.env.NEXT_PUBLIC_BASE_URL?.replace(/\/+$/, "");
+    const reqOrigin = new URL(req.url).origin;
+    const origin = isPublicBaseUrl(envUrl) ? envUrl! : reqOrigin;
 
     const reference = `l2s_${ctx.userId.slice(0, 8)}_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
 

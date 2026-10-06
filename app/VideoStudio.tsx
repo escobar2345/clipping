@@ -733,7 +733,7 @@ export default function VideoStudio() {
               </a>
               {publicUrl.mode === "ngrok"
                 ? " — auto-ngrok tunnel. Keep this app running until your posts publish; Buffer re-fetches the video at publish time."
-                : " — from NEXT_PUBLIC_BASE_URL when the video is reachable there; videos that only exist on this machine are served through an automatic ngrok tunnel instead."}
+                : " — rendered videos are served directly from your deployment, so Buffer can fetch them anytime."}
             </p>
           ) : (
             <p style={{ fontSize: 13, color: "#FFD37A", margin: 0 }}>{publicUrl.note}</p>

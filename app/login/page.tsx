@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "../../lib/supabase/client";
 
 /**
@@ -9,13 +10,33 @@ import { createClient } from "../../lib/supabase/client";
  * Supabase decides whether an email must be confirmed first — when it is, the
  * callback route handles the emailed link. The message below tells the user
  * which of the two happened rather than pretending sign-in always succeeded.
+ *
+ * Wrapped in Suspense because useSearchParams() needs a boundary above it —
+ * without one, `next build` fails on /login.
  */
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginInner />
+    </Suspense>
+  );
+}
+
+function LoginInner() {
+  const params = useSearchParams();
+  // Redirects here carry ?error=… (e.g. middleware when Supabase keys are
+  // missing, or the OAuth callback when the exchange fails). Surface it as a
+  // banner so the user sees WHY they landed on the login page.
+  const urlError = params.get("error");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (urlError) setError(decodeURIComponent(urlError));
+  }, [urlError]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
