@@ -36,6 +36,15 @@ function timeoutFor(action: any): number {
   }
 }
 
+/** Short replies that mean "execute the plan you just showed me". */
+function isPlanApproval(text: string): boolean {
+  const t = text.trim();
+  if (t.length > 60) return false;
+  return /^(y(es|eah|ep|a)?|yup|sure|ok(ay)?|go( ahead)?|do it|proceed|execute|approve(d)?|start( it)?|run it|continue|looks good|sounds good|good to go|perfect|lfg|send it)\b/i.test(
+    t
+  );
+}
+
 /** Chrome aborts fetches with a bare DOMException whose message is the cryptic
  *  "signal is aborted without reason". Translate that (and only that) into a
  *  sentence a human can act on. */
@@ -94,6 +103,10 @@ export default function ChatPanel({ pageState, promptContext, onStatePatch }: Ch
   const [pending, setPending] = useState<any | null>(null);
   const [executing, setExecuting] = useState(false);
   const stepsRef = useRef(0);
+  // Plan-first gate: cleared only when the user approves (Approve card or a
+  // typed "go"). Until then NO action executes — a hard backstop on top of the
+  // prompt's PLAN FIRST rule, so the AI can never jump straight to implementing.
+  const planOkRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Props are recreated on every parent render but the agent loop runs across
   // awaits — hold the latest values in refs so a step always reads the freshest
@@ -307,6 +320,12 @@ async function callChat(msgs: Msg[]) {
         setMessages(msgs.concat({ role: "assistant", content: j.reply }));
         if (!j.pendingAction) return; // the model is done for this turn
         const action = j.pendingAction;
+        // PLAN FIRST: block until the user approves (Approve card or typed
+        // approval) — the assistant must show its plan before anything runs.
+        if (!planOkRef.current) {
+          setPending({ ...action, planCard: true });
+          return;
+        }
         if (action.needsConfirm && !autoRun) {
           setPending(action); // stop and wait for the user's click
           return;
@@ -330,6 +349,9 @@ async function callChat(msgs: Msg[]) {
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
+    // A short approval ("go", "ok", "yes"…) executes the plan the assistant
+    // just showed; anything else starts a NEW plan cycle (gate closed again).
+    planOkRef.current = isPlanApproval(text);
     await drive([...messages, { role: "user", content: text }]);
   }
 
@@ -337,6 +359,7 @@ async function callChat(msgs: Msg[]) {
    *  going automatically (e.g. render → then propose posting). */
   async function confirmAction() {
     if (!pending || executing) return;
+    planOkRef.current = true; // confirming/approving = approval to proceed
     setExecuting(true);
     try {
       const j = await callExecute(pending);
@@ -519,7 +542,7 @@ if (!open) {
             }}
           >
             <b style={{ color: ACCENT }}>
-              Confirm {pending.actionLabel ?? pending.action}
+              {pending.planCard ? "Approve plan — start" : `Confirm ${pending.actionLabel ?? pending.action}`}
             </b>
             <div style={{ margin: "6px 0", fontSize: 12.5, color: "#c9ced4" }}>
               {summaryOfAction(pending)}
