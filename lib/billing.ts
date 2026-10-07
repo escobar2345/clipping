@@ -38,23 +38,23 @@ export async function getSubscription(): Promise<Subscription | null> {
   const ctx = await getAuthContext();
   if (!ctx) return null;
 
-  try {
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("subscriptions")
-      .select("plan, status, current_period_end")
-      .eq("user_id", ctx.userId)
-      .maybeSingle();
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select("plan, status, current_period_end")
+    .eq("user_id", ctx.userId)
+    .maybeSingle();
 
-    if (error || !data) return { ...FREE_SUBSCRIPTION };
-    return {
-      plan: (PLANS[data.plan as PaystackPlan["id"]] ? data.plan : "free") as PaystackPlan["id"],
-      status: data.status ?? "active",
-      currentPeriodEnd: data.current_period_end ?? null,
-    };
-  } catch {
-    return { ...FREE_SUBSCRIPTION };
-  }
+  // A genuinely missing row is the free tier. A database/schema/query error
+  // is not: treating it as free hides failed payment writes and produces a
+  // misleading monthly-quota message for paid users.
+  if (error) throw new Error(`Could not load your subscription: ${error.message}`);
+  if (!data) return { ...FREE_SUBSCRIPTION };
+  return {
+    plan: (PLANS[data.plan as PaystackPlan["id"]] ? data.plan : "free") as PaystackPlan["id"],
+    status: data.status ?? "active",
+    currentPeriodEnd: data.current_period_end ?? null,
+  };
 }
 
 /** Plans that grant access at all (everything except free). */

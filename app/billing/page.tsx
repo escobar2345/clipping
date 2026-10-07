@@ -47,6 +47,8 @@ function BillingInner() {
   const [current, setCurrent] = useState<string>("free");
   const [remaining, setRemaining] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [paymentReference, setPaymentReference] = useState("");
+  const [confirmingReference, setConfirmingReference] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const confirmPayment = useCallback(
@@ -117,6 +119,29 @@ function BillingInner() {
       </div>
 
       {notice && <p style={notice.kind === "ok" ? okStyle : errStyle}>{notice.text}</p>}
+
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const reference = paymentReference.trim();
+          if (!reference) return;
+          setConfirmingReference(true);
+          await confirmPayment(reference);
+          setConfirmingReference(false);
+        }}
+        style={{ maxWidth: 540, margin: "0 auto 24px", display: "flex", gap: 8, flexWrap: "wrap" }}
+      >
+        <input
+          aria-label="Paystack transaction reference"
+          value={paymentReference}
+          onChange={(event) => setPaymentReference(event.target.value)}
+          placeholder="Paystack transaction reference"
+          style={{ flex: "1 1 280px", minWidth: 0, padding: "10px 12px", background: "#15171A", color: "#E8E6E1", border: `1px solid ${BORDER}`, borderRadius: 8 }}
+        />
+        <button type="submit" style={primary} disabled={confirmingReference || !paymentReference.trim()}>
+          {confirmingReference ? "Verifying…" : "Already paid? Verify payment"}
+        </button>
+      </form>
 
       <div style={grid}>
         {plans.map((plan) => {
