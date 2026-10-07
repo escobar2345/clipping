@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { DEPLOYED_HOST, isPublicBaseUrl, publicOrigin } from "../../../lib/tunnel";
+import { checkDatabase } from "../../../lib/db";
+import { ensureTables } from "../../../lib/dbInit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,27 +9,37 @@ export const dynamic = "force-dynamic";
 /**
  * Configuration diagnostics for a live deployment — answers the only question
  * that matters when a deploy misbehaves: "does the app actually SEE my env
- * vars, or did they land as placeholders?"
+ * vars, or did they land as placeholders? Is Postgres reachable?"
  *
  * Booleans and shape checks ONLY — never a value, never a secret. Safe to hit
  * anonymously (it is on middleware's PUBLIC_API list).
  *
- * GET /api/health
+ * GET /api/health          → report
+ * GET /api/health?migrate=1 → re-run table creation first, then report
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   const v = (name: string) => process.env[name]?.trim() || "";
   // A value is a leftover template when it still contains angle brackets,
   // ellipses or the "your_…"/example words from .env.local.example.
   const looksPlaceholder = (s: string) =>
     !s || /<|>|\.\.\.|your[_-]|example|placeholder/i.test(s);
-  const isJwt = (s: string) => /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./.test(s);
 
-  const url = v("NEXT_PUBLIC_SUPABASE_URL");
-  const anon = v("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  const service = v("SUPABASE_SERVICE_ROLE_KEY");
+  const dbUrl = v("DATABASE_URL");
+  const pgHost = v("PGHOST");
   const paySecret = v("PAYSTACK_SECRET_KEY");
   const payPublic = v("NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY");
   const base = v("NEXT_PUBLIC_BASE_URL");
+
+  // Escape hatch: force the `create table if not exists` pass to run again
+  // (ensureTables caches success in-process, so this is the way to re-check
+  // after fixing DATABASE_URL without restarting).
+  let migrated: boolean | null = null;
+  if (req.nextUrl.searchParams.get("migrate") === "1") {
+    await ensureTables();
+    migrated = true;
+  }
+
+  const db = await checkDatabase();
 
   const report = {
     runtime: {
@@ -36,23 +48,15 @@ export async function GET() {
       learnedPublicOrigin: publicOrigin(),
     },
     config: {
-      NEXT_PUBLIC_SUPABASE_URL: {
-        set: !!url,
-        placeholder: looksPlaceholder(url),
-        looksLikeSupabase: /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(url),
+      DATABASE_URL: {
+        set: !!dbUrl,
+        placeholder: looksPlaceholder(dbUrl),
+        // Host only, never credentials — enough to spot a wrong var.
+        host: dbUrl ? safeHost(dbUrl) : null,
       },
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: {
-        set: !!anon,
-        placeholder: looksPlaceholder(anon),
-        isJwt: isJwt(anon),
-        isAnonRole: jwtRole(anon) === "anon",
-      },
-      SUPABASE_SERVICE_ROLE_KEY: {
-        set: !!service,
-        placeholder: looksPlaceholder(service),
-        isJwt: isJwt(service),
-        // Only says WHICH role the key carries — not the key itself.
-        role: jwtRole(service) || null,
+      PGHOST: {
+        set: !!pgHost,
+        placeholder: looksPlaceholder(pgHost),
       },
       PAYSTACK_SECRET_KEY: {
         set: !!paySecret,
@@ -71,32 +75,28 @@ export async function GET() {
         value: base || null, // public by design (it's the site's own URL)
       },
     },
+    database: {
+      configured: !!(dbUrl || pgHost),
+      reachable: db.ok,
+      error: db.ok ? null : db.error,
+      migrated,
+    },
     hint:
       "Every `placeholder: true` means the Railway variable still holds the " +
       "template text, not your real key. NEXT_PUBLIC_* values are baked in at " +
       "BUILD time — after fixing a variable, trigger a full redeploy, not just " +
-      "a restart.",
+      "a restart. DATABASE_URL is read at runtime, so fixing it only needs a " +
+      "restart (or ?migrate=1 for the tables).",
   };
 
   return NextResponse.json(report, { headers: { "cache-control": "no-store" } });
 }
 
-/** Decode just enough of a JWT payload to read its `role` claim. */
-function jwtPayload(token: string): Record<string, unknown> | null {
+/** Extracts just the host from a Postgres URL — never the password. */
+function safeHost(url: string): string | null {
   try {
-    const b64 = token.split(".")[1] ?? "";
-    const json = Buffer.from(
-      b64.replace(/-/g, "+").replace(/_/g, "/"),
-      "base64"
-    ).toString("utf8");
-    const parsed = JSON.parse(json);
-    return typeof parsed === "object" && parsed ? parsed : null;
+    return new URL(url).host || null;
   } catch {
     return null;
   }
-}
-
-function jwtRole(token: string): string | null {
-  const r = jwtPayload(token)?.role;
-  return typeof r === "string" ? r : null;
 }

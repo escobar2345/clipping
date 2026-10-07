@@ -27,7 +27,7 @@ import { AsyncLocalStorage } from "async_hooks";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Rejects anything that isn't a plain Supabase user UUID. */
+/** Rejects anything that isn't a plain UUID. */
 export function assertSafeUserId(userId: string): string {
   if (!userId || !UUID_RE.test(userId)) {
     throw new Error(`Refusing to build a storage path for an unsafe user id: ${userId}`);

@@ -1,89 +1,50 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
 
 /**
- * Session refresh + route protection.
+ * Route protection.
  *
- * Runs on every request so Supabase's auth cookie is kept fresh. Pages that
- * need a signed-in user are redirected to /login; API routes get a 401 JSON
- * body instead, because redirecting a fetch() to an HTML login page is exactly
- * what produced the old `Unexpected token '<'` confusion.
- */ 
-const PUBLIC_PAGES = ["/login", "/signup", "/auth/callback"];
+ * Auth is app-owned: a `l2s_session` httpOnly cookie holding a random token
+ * kept in the Postgres `sessions` table. Middleware only checks for its
+ * PRESENCE (cheap edge check); every API route revalidates it against the
+ * database (see lib/authContext.ts), so a stolen/expired token still fails.
+ *
+ * Pages that need a signed-in user are redirected to /login; API routes get a
+ * 401 JSON body instead, because redirecting a fetch() to an HTML login page
+ * is exactly what produced the old `Unexpected token '<'` confusion.
+ */
+const PUBLIC_PAGES = ["/login", "/signup"];
 
 function isPublicPage(pathname: string): boolean {
   return PUBLIC_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 /**
- * Endpoints that must stay reachable with NO session. The Paystack webhook
- * calls in from Paystack's servers, which obviously have no Supabase cookie —
- * gating it would mean payments silently never arrive. It authenticates itself
- * by re-verifying every transaction with Paystack's API (see the route), so it
- * needs no cookie and must never trust the request body on its own.
+ * Endpoints that must stay reachable with NO session: login/signup (the user
+ * has no cookie yet), sign-out (must always succeed), the Paystack webhook
+ * (Paystack's servers have no cookie — it authenticates itself by re-verifying
+ * every transaction with Paystack's API), and health checks.
  */
-const PUBLIC_API = ["/api/billing/webhook", "/api/health"];
+const PUBLIC_API = [
+  "/api/auth/login",
+  "/api/auth/signup",
+  "/api/auth/signout",
+  "/api/billing/webhook",
+  "/api/health",
+];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  let response = NextResponse.next({ request });
+  const response = NextResponse.next({ request });
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  // Supabase not configured yet — treat everyone as signed out EXCEPT on the
-  // login/signup/callback pages themselves (which must stay reachable so the
-  // user can see the setup error there). This guarantees no visitor ever lands
-  // on the studio as "Not signed in": it's either login, signup, or the app.
-  if (!url || !anonKey) {
-    if (isPublicPage(pathname)) return response;
-    if (pathname.startsWith("/api")) {
-      return NextResponse.json(
-        {
-          error:
-            "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and " +
-            "NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local (see " +
-            ".env.local.example) and restart the dev server.",
-        },
-        { status: 500 }
-      );
-    }
-    const redirect = request.nextUrl.clone();
-    redirect.pathname = "/login";
-    redirect.searchParams.set(
-      "error",
-      "Supabase is not configured. Add your keys to .env.local and restart the server."
-    );
-    return NextResponse.redirect(redirect);
-  }
-
-  const supabase = createServerClient(url, anonKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        for (const { name, value } of cookiesToSet) {
-          request.cookies.set(name, value);
-        }
-        response = NextResponse.next({ request });
-        for (const { name, value, options } of cookiesToSet) {
-          response.cookies.set(name, value, options);
-        }
-      },
-    },
-  });
-
-  // getUser() revalidates the JWT with Supabase; this is what refreshes it.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Presence check only — cheap at the edge. API routes + pages revalidate
+  // the token against the Postgres sessions table (lib/authContext.ts).
+  const hasSession = Boolean(request.cookies.get("l2s_session")?.value);
 
   const isPublic = isPublicPage(pathname);
   const isPublicApi = PUBLIC_API.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
-  if (!user && !isPublic && !isPublicApi) {
+  if (!hasSession && !isPublic && !isPublicApi) {
     if (pathname.startsWith("/api")) {
       // Keep the API contract JSON-only — never redirect a fetch to HTML.
       return NextResponse.json(
@@ -98,7 +59,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Already signed in but sitting on the login/signup page → go to the app.
-  if (user && (pathname === "/login" || pathname === "/signup")) {
+  if (hasSession && (pathname === "/login" || pathname === "/signup")) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/";
     redirect.search = "";

@@ -2,14 +2,10 @@
 
 import React, { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClient } from "../../lib/supabase/client";
 
 /**
- * Email + password sign-in, plus Google OAuth.
- *
- * Supabase decides whether an email must be confirmed first — when it is, the
- * callback route handles the emailed link. The message below tells the user
- * which of the two happened rather than pretending sign-in always succeeded.
+ * Email + password sign-in against the app's own Postgres accounts
+ * (POST /api/auth/login → sets the httpOnly `l2s_session` cookie).
  *
  * Wrapped in Suspense because useSearchParams() needs a boundary above it —
  * without one, `next build` fails on /login.
@@ -24,9 +20,8 @@ export default function LoginPage() {
 
 function LoginInner() {
   const params = useSearchParams();
-  // Redirects here carry ?error=… (e.g. middleware when Supabase keys are
-  // missing, or the OAuth callback when the exchange fails). Surface it as a
-  // banner so the user sees WHY they landed on the login page.
+  // Redirects here carry ?error=… (e.g. from a failed OAuth exchange on old
+  // links). Surface it as a banner so the user sees WHY they landed here.
   const urlError = params.get("error");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -49,34 +44,18 @@ function LoginInner() {
 
     setBusy(true);
     try {
-      const supabase = createClient();
-      const { error: err } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password }),
       });
-      if (err) throw err;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not sign in.");
 
       // A full reload lets middleware pick up the new session cookie.
       window.location.href = "/";
     } catch (err: any) {
       setError(err?.message ?? "Could not sign in.");
-      setBusy(false);
-    }
-  }
-
-  async function handleGoogle() {
-    setError(null);
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { error: err } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
-      });
-      if (err) throw err;
-      // Supabase redirects the browser itself.
-    } catch (err: any) {
-      setError(err?.message ?? "Could not start Google sign-in.");
       setBusy(false);
     }
   }
@@ -120,14 +99,6 @@ function LoginInner() {
 
         <button type="submit" style={button} disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
-        </button>
-
-        <div style={divider}>
-          <span style={dividerText}>or</span>
-        </div>
-
-        <button type="button" style={ghostButton} onClick={handleGoogle} disabled={busy}>
-          Continue with Google
         </button>
 
         <p style={{ margin: "18px 0 0", fontSize: 13, color: "#8A8D93", textAlign: "center" }}>

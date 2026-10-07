@@ -1,12 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { createClient } from "../../lib/supabase/client";
 
 /**
- * Account creation. When Supabase has "Confirm email" enabled the user lands on
- * a "check your inbox" state instead of being signed straight in — that's their
- * project setting, not something we override here.
+ * Account creation against the app's own Postgres accounts
+ * (POST /api/auth/signup → creates `users`, signs the user in immediately —
+ * there is no email-confirmation step in this setup).
  */
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -14,7 +13,6 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -31,62 +29,19 @@ export default function SignupPage() {
 
     setBusy(true);
     try {
-      const supabase = createClient();
-      const { data, error: err } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: { full_name: name.trim() },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password, name: name.trim() }),
       });
-      if (err) throw err;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Could not create the account.");
 
-      // No session = Supabase is waiting for the email confirmation click.
-      if (!data.session) {
-        setAwaitingConfirm(true);
-        return;
-      }
       window.location.href = "/";
     } catch (err: any) {
       setError(err?.message ?? "Could not create the account.");
-    } finally {
       setBusy(false);
     }
-  }
-
-  async function handleGoogle() {
-    setError(null);
-    setBusy(true);
-    try {
-      const supabase = createClient();
-      const { error: err } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
-      });
-      if (err) throw err;
-      // Supabase redirects the browser itself.
-    } catch (err: any) {
-      setError(err?.message ?? "Could not start Google sign-up.");
-      setBusy(false);
-    }
-  }
-
-  if (awaitingConfirm) {
-    return (
-      <main style={wrap}>
-        <div style={card}>
-          <h1 style={h1}>Check your inbox</h1>
-          <p style={muted}>
-            We sent a confirmation link to <strong style={{ color: "#E8E6E1" }}>{email}</strong>.
-            Open it to activate your account, then sign in.
-          </p>
-          <a href="/login" style={{ ...linkBtn, marginTop: 22 }}>
-            Back to sign in
-          </a>
-        </div>
-      </main>
-    );
   }
 
   return (
@@ -138,14 +93,6 @@ export default function SignupPage() {
 
         <button type="submit" style={button} disabled={busy}>
           {busy ? "Creating…" : "Create account"}
-        </button>
-
-        <div style={divider}>
-          <span style={dividerText}>or</span>
-        </div>
-
-        <button type="button" style={ghostButton} onClick={handleGoogle} disabled={busy}>
-          Continue with Google
         </button>
 
         <p style={footNote}>

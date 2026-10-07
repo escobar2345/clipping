@@ -6,7 +6,7 @@ import { rememberPublicOrigin } from "./tunnel";
 
 /**
  * Wraps an API route handler with everything a request needs:
- *   1. a valid Supabase session (401 JSON when signed out)
+ *   1. a valid session (401 JSON when signed out)
  *   2. a user scope, so per-user storage resolves to that user's directories
  *   3. optional plan gating (402 when the plan doesn't allow the action)
  *   4. JSON errors — never an HTML page

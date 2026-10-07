@@ -7,6 +7,9 @@ const nextConfig = {
   // experimental.serverComponentsExternalPackages (top-level
   // serverExternalPackages is a Next 15.1+ key and is ignored here).
   experimental: {
+    // Runs instrumentation.ts once per server boot: installs resilient DNS
+    // and creates the Postgres tables if they're missing.
+    instrumentationHook: true,
     serverComponentsExternalPackages: [
       "@remotion/bundler",
       "@remotion/renderer",
