@@ -32,6 +32,21 @@ const PUBLIC_API = [
   "/api/health",
 ];
 
+/** Static media (source videos + rendered clips) stays reachable WITHOUT a
+ *  cookie, by design:
+ *  - Remotion's render proxy fetches the source mp4 from localhost with no
+ *    session (a redirect here feeds it the HTML login page and the render
+ *    dies with "Invalid data found when processing input"),
+ *  - the Buffer/tunnel flow and social platforms fetch the OUTPUT URLs
+ *    server-side too.
+ *  The file LISTINGS still go through the protected /api/uploads and
+ *  /api/renders routes — only the bytes are public. */
+const PUBLIC_MEDIA = ["/uploads/", "/renders/"];
+
+function isPublicMedia(pathname: string): boolean {
+  return PUBLIC_MEDIA.some((p) => pathname.startsWith(p));
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -40,6 +55,12 @@ export async function middleware(request: NextRequest) {
   // Presence check only — cheap at the edge. API routes + pages revalidate
   // the token against the Postgres sessions table (lib/authContext.ts).
   const hasSession = Boolean(request.cookies.get("l2s_session")?.value);
+
+  // Media bytes are public (see PUBLIC_MEDIA) — skip ALL auth logic for them,
+  // including the signed-in login-page bounce.
+  if (isPublicMedia(pathname)) {
+    return response;
+  }
 
   const isPublic = isPublicPage(pathname);
   const isPublicApi = PUBLIC_API.some((p) => pathname === p || pathname.startsWith(`${p}/`));

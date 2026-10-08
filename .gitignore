@@ -50,4 +50,8 @@ data/
 
 # Generated voice files (Voice Studio) — artifacts, not source
 public/voice/
+
+# User uploads and rendered clips — artifacts, not source
+public/uploads/
+public/renders/
 voice-server/voice-server.log

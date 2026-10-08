@@ -8,6 +8,7 @@ import type {
   ZoomKeyframe,
 } from "./types";
 import { buildCaptionCues } from "./captions";
+import { sanitizeGrade, sanitizeEffects } from "./colorGrade";
 import { hasExactTimings, retimeClipWithWords, tightenEnabled } from "./tighten";
 
 // Turns the LLM's raw JSON into a plan the renderer can trust:
@@ -262,6 +263,14 @@ export function normalizeClips(
       zoomKeyframes,
       minLenSec: minLen > 0 ? minLen : undefined,
     };
+
+    // --- grade + timed effects (the AI's look / AE-style flair) -------------
+    // Carried on the clip through the retime below (which spreads ...clip)
+    // and into the render, where remotion/ShortClip.tsx applies them.
+    const grade = sanitizeGrade((r as any).grade);
+    if (grade) plan.grade = grade;
+    const effects = sanitizeEffects((r as any).effects, dur);
+    if (effects.length) plan.effects = effects;
 
     // Tighten: cut dead air + filler words out of the middle of the clip. Only
     // with MEASURED word times (estimated ones would cut in the wrong places)

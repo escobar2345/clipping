@@ -229,6 +229,11 @@ export default function ChatPanel({ pageState, promptContext, onStatePatch }: Ch
           return { ...action, renderedPath: s.renderedUrls?.[Number(action.clipIndex)] };
         }
         return action;
+      case "apply_grade":
+      case "add_effect":
+      case "clear_effects":
+        // Look actions always operate on the live plan in page state.
+        return { ...action, editPlan: s.editPlan };
       default:
         return action;
     }

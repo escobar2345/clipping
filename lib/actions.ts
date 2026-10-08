@@ -14,7 +14,11 @@ import type {
   EditRules,
   StyleProfile,
   EditPlan,
+  ClipEffect,
+  GradeSpec,
 } from "./types";
+import { GRADE_PRESETS, EFFECT_TYPES, sanitizeGrade, sanitizeEffects } from "./colorGrade";
+import { editedDurationSec } from "./timeline";
 import { analyzeAnyUrl, isYouTubeUrl } from "./anywhere";
 import { getVideoDurationSec } from "./ffmpegFrames";
 import { localFileUrl } from "./youtube";
@@ -161,6 +165,24 @@ export const ACTION_SPECS: ActionSpec[] = [
     label: "cut a 7-15s Story teaser from a RENDERED clip (ffmpeg)",
     needsConfirm: false,
     example: '{"action":"story_cut","clipIndex":0,"teaserSec":15}',
+  },
+  {
+    id: "apply_grade",
+    label: "apply a color grade (cinematic look) to one clip or all clips — re-render to see it",
+    needsConfirm: false,
+    example: '{"action":"apply_grade","clipIndex":"all","preset":"cinematic","intensity":0.8}',
+  },
+  {
+    id: "add_effect",
+    label: "add a timed visual effect (shake = camera rumble, flash = impact hit, lightLeak = warm sweep) to a clip",
+    needsConfirm: false,
+    example: '{"action":"add_effect","clipIndex":0,"type":"flash","atSec":1.5,"intensity":0.9}',
+  },
+  {
+    id: "clear_effects",
+    label: "remove the effects and/or the color grade from one clip or all clips",
+    needsConfirm: false,
+    example: '{"action":"clear_effects","clipIndex":"all","what":"all"}',
   },
   {
     id: "render_clip",
@@ -638,6 +660,161 @@ export async function deleteUpload(file: string): Promise<ActionOutcome> {
 }
 
 // ---------------------------------------------------------------------------
+// Color grading + visual effects — write the look into the plan;
+// lib/colorGrade.ts renders it when Remotion composites the clip.
+// ---------------------------------------------------------------------------
+
+function requirePlan(editPlan: any): EditPlan {
+  if (!editPlan?.clips?.length) {
+    throw new Error("No edit plan loaded — generate an edit plan first.");
+  }
+  return editPlan as EditPlan;
+}
+
+/** clipIndex resolution: "all" / omitted = every clip, otherwise one index. */
+function targetClipIndexes(count: number, clipIndex: unknown): number[] {
+  if (clipIndex == null || clipIndex === "all" || clipIndex === "*") {
+    return Array.from({ length: count }, (_, i) => i);
+  }
+  const i = Number(clipIndex);
+  if (!Number.isInteger(i) || i < 0 || i >= count) {
+    throw new Error(
+      `clipIndex ${JSON.stringify(clipIndex)} is out of range — use 0..${count - 1} or "all".`
+    );
+  }
+  return [i];
+}
+
+export async function applyGrade(params: {
+  editPlan: EditPlan;
+  clipIndex?: number | "all";
+  preset?: string;
+  intensity?: number;
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  warmth?: number;
+  vignette?: number;
+  grain?: number;
+}): Promise<ActionOutcome> {
+  const plan = requirePlan(params.editPlan);
+  const targets = targetClipIndexes(plan.clips.length, params.clipIndex);
+  const requested = String(params.preset ?? "").trim().toLowerCase();
+
+  let grade: GradeSpec | undefined;
+  if (requested === "none" || requested === "clear" || requested === "off") {
+    grade = undefined; // deliberate removal
+  } else {
+    if (requested && !Object.prototype.hasOwnProperty.call(GRADE_PRESETS, requested)) {
+      throw new Error(
+        `Unknown grade preset "${params.preset}". Pick one of: ` +
+          `${Object.keys(GRADE_PRESETS).join(", ")} — or "none" to remove the grade.`
+      );
+    }
+    const spec: GradeSpec = requested ? { preset: requested } : {};
+    for (const k of ["intensity", "brightness", "contrast", "saturation", "warmth", "vignette", "grain"] as const) {
+      if (params[k] !== undefined) spec[k] = params[k];
+    }
+    grade = sanitizeGrade(spec);
+    if (!grade) {
+      throw new Error('Nothing to apply — pass a preset (e.g. "cinematic") or numeric grade fields.');
+    }
+  }
+
+  const clips = plan.clips.map((c, i) => {
+    if (!targets.includes(i)) return c;
+    const next = { ...c };
+    if (grade) next.grade = grade;
+    else delete next.grade;
+    return next;
+  });
+
+  return {
+    result: {
+      ok: true,
+      preset: grade?.preset ?? (grade ? "custom" : "none"),
+      clipIndexes: targets,
+      grade: grade ?? null,
+    },
+    statePatch: { editPlan: { ...plan, clips } },
+  };
+}
+
+export async function addEffect(params: {
+  editPlan: EditPlan;
+  clipIndex?: number | "all";
+  type: string;
+  atSec?: number;
+  durSec?: number;
+  intensity?: number;
+  color?: string;
+}): Promise<ActionOutcome> {
+  const plan = requirePlan(params.editPlan);
+  const targets = targetClipIndexes(plan.clips.length, params.clipIndex);
+  const type = String(params.type ?? "").trim();
+  if (!(EFFECT_TYPES as readonly string[]).includes(type)) {
+    throw new Error(`Unknown effect type "${params.type}". Pick one of: ${EFFECT_TYPES.join(", ")}.`);
+  }
+
+  let applied: ClipEffect | null = null;
+  const fxs = new Map<number, ClipEffect>();
+  for (const i of targets) {
+    const dur = editedDurationSec(plan.clips[i]);
+    const [fx] = sanitizeEffects(
+      [{ type, atSec: params.atSec, durSec: params.durSec, intensity: params.intensity, color: params.color }],
+      dur
+    );
+    if (!fx) {
+      throw new Error(`atSec ${params.atSec} is past the end of clip ${i} (${dur.toFixed(1)}s).`);
+    }
+    applied = applied ?? fx;
+    fxs.set(i, fx);
+  }
+  if (!applied) throw new Error("Effect could not be applied.");
+
+  const clips = plan.clips.map((c, i) => {
+    const fx = fxs.get(i);
+    if (!fx) return c;
+    return { ...c, effects: [...(c.effects ?? []), fx].slice(-8) };
+  });
+
+  return {
+    result: {
+      ok: true,
+      type,
+      clipIndexes: targets,
+      atSec: applied.atSec,
+      durSec: applied.durSec,
+    },
+    statePatch: { editPlan: { ...plan, clips } },
+  };
+}
+
+export async function clearEffects(params: {
+  editPlan: EditPlan;
+  clipIndex?: number | "all";
+  what?: string;
+}): Promise<ActionOutcome> {
+  const plan = requirePlan(params.editPlan);
+  const targets = targetClipIndexes(plan.clips.length, params.clipIndex);
+  const whatRaw = String(params.what ?? "all").trim().toLowerCase();
+  const what = whatRaw === "effects" || whatRaw === "grade" ? whatRaw : "all";
+
+  const clips = plan.clips.map((c, i) => {
+    if (!targets.includes(i)) return c;
+    const next = { ...c };
+    if (what === "effects" || what === "all") delete next.effects;
+    if (what === "grade" || what === "all") delete next.grade;
+    return next;
+  });
+
+  return {
+    result: { ok: true, cleared: what, clipIndexes: targets },
+    statePatch: { editPlan: { ...plan, clips } },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher — /api/chat/execute lands here for every new-style action.
 // ---------------------------------------------------------------------------
 
@@ -651,6 +828,9 @@ const EXECUTORS: Record<string, (p: any) => Promise<ActionOutcome>> = {
   trending_sounds: (p) => trendingSounds(p?.topic ?? ""),
   viral_pack: (p) => viralPack(p ?? {}),
   story_cut: (p) => storyCut(p ?? {}),
+  apply_grade: (p) => applyGrade(p ?? {}),
+  add_effect: (p) => addEffect(p ?? {}),
+  clear_effects: (p) => clearEffects(p ?? {}),
   post_to_buffer: (p) => postToBuffer(p ?? {}),
   delete_render: (p) => deleteRender(p?.file ?? ""),
   delete_upload: (p) => deleteUpload(p?.file ?? ""),
@@ -746,6 +926,16 @@ export function summarizeOutcome(kind: string, outcome: ActionOutcome): string {
         return `Viral packs ready for ${r.platformCount ?? 0} platforms.`;
       case "story_cut":
         return `Story teaser cut -> ${r.url}.`;
+      case "apply_grade": {
+        const list = (r.clipIndexes ?? []).join(", ");
+        return r.preset === "none"
+          ? `Color grade removed from clip(s) ${list}.`
+          : `Color grade "${r.preset}" applied to clip(s) ${list} — re-render to see it.`;
+      }
+      case "add_effect":
+        return `${r.type} effect added at ${r.atSec}s to clip(s) ${(r.clipIndexes ?? []).join(", ")} — re-render to see it.`;
+      case "clear_effects":
+        return `Cleared ${r.cleared} from clip(s) ${(r.clipIndexes ?? []).join(", ")}.`;
       case "post_to_buffer":
         return `Posted to ${r.summary?.succeeded ?? 0}/${r.summary?.total ?? 0} channels.`;
       case "delete_render":

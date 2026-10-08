@@ -10,6 +10,17 @@ import {
 } from "remotion";
 import type { CaptionCue, ClipPlan } from "../lib/types";
 import { segmentFrames } from "../lib/timeline";
+import {
+  resolveGrade,
+  gradeToFilter,
+  gradeTint,
+  gradeVignette,
+  GRAIN_NOISE_URI,
+  grainPosition,
+  combineShake,
+  flashOverlay,
+  lightLeakOpacity,
+} from "../lib/colorGrade";
 
 export type ShortClipProps = {
   sourceVideoPath: string;
@@ -192,6 +203,16 @@ export const ShortClipComposition: React.FC<ShortClipProps> = ({ sourceVideoPath
   // zoom and crop are all authored on this timeline.
   const relativeSec = frame / fps;
 
+  // Look: grade (filter + tint + vignette + grain) and timed AE-style
+  // effects, all resolved from the clip's spec by lib/colorGrade.ts.
+  const grade = resolveGrade(clip.grade);
+  const gradeFilter = gradeToFilter(grade);
+  const tint = gradeTint(grade);
+  const vignette = gradeVignette(grade);
+  const shake = combineShake(clip.effects, frame, fps);
+  const flash = flashOverlay(clip.effects, relativeSec);
+  const leak = lightLeakOpacity(clip.effects, relativeSec);
+
   const zoom = useZoomTransform(clip, relativeSec);
   const placement = useCropPlacement(clip, relativeSec);
   // when the crop follows a face, zoom in around the face, not the frame centre
@@ -203,8 +224,11 @@ export const ShortClipComposition: React.FC<ShortClipProps> = ({ sourceVideoPath
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       <AbsoluteFill
         style={{
-          transform: `scale(${scale})`,
+          // shake (translate/rotate) punches the whole picture; the grade
+          // filter applies to the video layer only — text stays ungraded.
+          transform: `translate(${shake.x}px, ${shake.y}px) rotate(${shake.rot}deg) scale(${scale})`,
           transformOrigin: `${focusX * 100}% ${focusY * 100}%`,
+          filter: gradeFilter || undefined,
         }}
       >
         {/* One piece per kept segment, laid end to end. An untightened clip is
@@ -226,6 +250,34 @@ export const ShortClipComposition: React.FC<ShortClipProps> = ({ sourceVideoPath
         ))}
       </AbsoluteFill>
 
+      {/* --- Look overlays (video layer only — captions/hook text stay
+           ungraded so on-screen type remains readable) ------------------- */}
+      {tint && (
+        <AbsoluteFill style={{ backgroundColor: tint, mixBlendMode: "soft-light" }} />
+      )}
+      {vignette && <AbsoluteFill style={{ background: vignette }} />}
+      {grade.grain > 0 && (
+        <AbsoluteFill
+          style={{
+            backgroundImage: GRAIN_NOISE_URI,
+            backgroundSize: "160px 160px",
+            backgroundPosition: grainPosition(frame),
+            opacity: grade.grain * 0.55,
+            mixBlendMode: "overlay",
+          }}
+        />
+      )}
+      {leak > 0 && (
+        <AbsoluteFill
+          style={{
+            background:
+              "linear-gradient(115deg, rgba(255,122,40,0.9) 0%, rgba(255,60,120,0.35) 32%, rgba(0,0,0,0) 62%)",
+            mixBlendMode: "screen",
+            opacity: leak,
+          }}
+        />
+      )}
+
       <Captions clip={clip} localSec={relativeSec} />
 
       <Sequence from={0} durationInFrames={Math.round(30 * fps)}>
@@ -245,6 +297,11 @@ export const ShortClipComposition: React.FC<ShortClipProps> = ({ sourceVideoPath
           {clip.hookTitle}
         </div>
       </Sequence>
+
+      {/* Flash sits above everything — it's a ~0.3s impact hit, not a layer. */}
+      {flash && (
+        <AbsoluteFill style={{ backgroundColor: flash.color, opacity: flash.opacity }} />
+      )}
     </AbsoluteFill>
   );
 };

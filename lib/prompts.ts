@@ -29,6 +29,9 @@ CONCISENESS IS A HARD REQUIREMENT:
 - captions: max 5 words per cue. Strip ALL filler and hedging ("um", "uh", "so", "basically", "like", "you know", "I mean"). Sentence case. No trailing periods.
 - Start each clip on its strongest line: move sourceStartSec forward past any preamble. End on a punchline, strong claim or cliffhanger — never mid-sentence.
 - zoomKeyframes: 2-4 per clip, subtle (scale 1.0-1.25).
+- LOOK & FX — every clip gets a grade, and optionally 1-2 timed effects:
+  - grade.preset: pick the mood match — cinematic (drama), golden (uplifting), moody (dark stories), punchy (sports/action), vibrant (lifestyle), vintage (nostalgia), noir (serious monologues), cold (thrillers). Adjust grade.intensity (0-1) to taste.
+  - effects: flash (0.2-0.3s, optional hex color) on the hook or a punchline; shake (0.5-1s) on hype/action beats; lightLeak (1-2s) on emotional transitions. atSec is RELATIVE to the clip start. Sparse beats spammy — never stack more than 2 effects per clip.
 - TIME BASE: sourceStartSec / sourceEndSec are absolute seconds in the source video. Every captions[].startSec/endSec and zoomKeyframes[].atSec is RELATIVE to the clip's own start (0 = sourceStartSec). Captions are optional — the system rebuilds them from the transcript, so spend your effort on choosing the moments.
 - Fewer, better clips beat padding to the requested count. Cut anything that does not advance the hook.
 
@@ -43,6 +46,8 @@ type EditPlan = {
     hookTitle: string;
     captions: { text: string; startSec: number; endSec: number; emphasizeWordIndex?: number }[];
     zoomKeyframes: { atSec: number; scale: number; focusX: number; focusY: number }[];
+    grade?: { preset?: string; intensity?: number; brightness?: number; contrast?: number; saturation?: number; warmth?: number; vignette?: number; grain?: number };
+    effects?: { type: "shake" | "flash" | "lightLeak"; atSec?: number; durSec?: number; intensity?: number; color?: string }[];
   }[];
 };`;
 
