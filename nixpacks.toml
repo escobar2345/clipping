@@ -10,6 +10,34 @@ providers = ["node"]
 # nodejs_22 (not 20) is required by the bgutil PO-token server (Node >= 22).
 nixPkgs = ["nodejs_22", "ffmpeg"]
 
+# Shared libraries required by chrome-headless-shell (Remotion's renderer).
+# The base image is minimal, so without these every /api/render dies with:
+#   Failed to launch the browser process! ... libnspr4.so: cannot open
+#   shared object file ... Closed with 127 signal
+# (127 = exec failed on missing .so; libnspr4 is pulled by libnss3 but listed
+# explicitly for clarity). List = Remotion's Debian/Ubuntu requirements from
+# remotion.dev/docs/miscellaneous/linux-dependencies, plus fonts so burned-in
+# caption glyphs actually render.
+aptPkgs = [
+  "libnss3",
+  "libnspr4",
+  "libdbus-1-3",
+  "libatk1.0-0",
+  "libatk-bridge2.0-0",
+  "libasound2",
+  "libgbm-dev",
+  "libcups2",
+  "libcairo2",
+  "libpango-1.0-0",
+  "libxrandr2",
+  "libxkbcommon-dev",
+  "libxfixes3",
+  "libxcomposite1",
+  "libxdamage1",
+  "fonts-liberation",
+  "fontconfig",
+]
+
 [phases.install]
 cmds = ["npm ci"]
 
