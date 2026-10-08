@@ -54,4 +54,7 @@ public/voice/
 # User uploads and rendered clips — artifacts, not source
 public/uploads/
 public/renders/
+
+# yt-dlp binary fetched by scripts/install-ytdlp.mjs (postinstall) — artifact, not source
+vendor/
 voice-server/voice-server.log

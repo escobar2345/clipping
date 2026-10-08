@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "postinstall": "node scripts/install-ytdlp.mjs",
+    "install:ytdlp": "node scripts/install-ytdlp.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.0",

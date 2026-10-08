@@ -26,11 +26,12 @@ const VIDEO_EXTS = [".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi"];
 const SUBTITLE_EXTS = [".vtt", ".srt", ".json3", ".srv3", ".ttml"];
 
 const MISSING_BIN_HINT =
-  "yt-dlp is not installed or not on PATH. Install it with " +
-  '"pip install -U yt-dlp" (or download yt-dlp.exe from ' +
-  "https://github.com/yt-dlp/yt-dlp#installation), then restart the dev server. " +
-  "If it lives somewhere unusual, set YTDLP_PATH in .env.local to the full path " +
-  "of the binary.";
+  "yt-dlp is not installed or not on PATH. Run `npm run install:ytdlp` to fetch " +
+  "the standalone binary into vendor/bin/ (this also runs automatically during " +
+  "`npm install`/`npm ci`), or install it with \"pip install -U yt-dlp\" (or " +
+  "download yt-dlp.exe from https://github.com/yt-dlp/yt-dlp#installation), then " +
+  "restart the dev server. If it lives somewhere unusual, set YTDLP_PATH in " +
+  ".env.local to the full path of the binary.";
 
 interface Runner {
   cmd: string;
@@ -44,6 +45,16 @@ function candidates(): Runner[] {
   const list: Runner[] = [];
   const explicit = (process.env.YTDLP_PATH ?? "").trim();
   if (explicit) list.push({ cmd: explicit, baseArgs: [] });
+  // Binary vendored by scripts/install-ytdlp.mjs (postinstall). Preferred over
+  // PATH lookups: on Railway no system yt-dlp/python exists, so this is what
+  // makes renders work in the container.
+  const vendored = path.join(
+    process.cwd(),
+    "vendor",
+    "bin",
+    process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp"
+  );
+  if (fs.existsSync(vendored)) list.push({ cmd: vendored, baseArgs: [] });
   // On Windows the extensionless name can fail execFile, so try .exe first.
   list.push({ cmd: "yt-dlp.exe", baseArgs: [] }, { cmd: "yt-dlp", baseArgs: [] });
   // Fall back to the Python module — works when the console script isn't on PATH.
