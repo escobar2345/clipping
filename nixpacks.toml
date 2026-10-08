@@ -7,7 +7,8 @@ providers = ["node"]
 [phases.setup]
 # ffmpeg ships ffprobe too — needed by yt-dlp's --merge-output-format when
 # rendering external-URL sources, upload duration reads, and style-frame grabs.
-nixPkgs = ["nodejs_20", "ffmpeg"]
+# nodejs_22 (not 20) is required by the bgutil PO-token server (Node >= 22).
+nixPkgs = ["nodejs_22", "ffmpeg"]
 
 [phases.install]
 cmds = ["npm ci"]

@@ -33,6 +33,99 @@ const MISSING_BIN_HINT =
   "restart the dev server. If it lives somewhere unusual, set YTDLP_PATH in " +
   ".env.local to the full path of the binary.";
 
+/**
+ * Optional flags applied to EVERY yt-dlp invocation, driven by env so Railway
+ * can be reconfigured without code changes:
+ *
+ *   --plugin-dirs  points the (standalone) binary at the bgutil PO-token plugin
+ *                  vendored by scripts/install-pot-provider.mjs, so YouTube's
+ *                  "Sign in to confirm you're not a bot" checks on flagged IPs
+ *                  get proof-of-origin tokens from the local server (port 4416).
+ *   --js-runtimes  yt-dlp enables ONLY deno as a JS runtime by default; with
+ *                  none found, the n-challenge solver fails and formats are
+ *                  dropped. We always run under node, so hand yt-dlp the exact
+ *                  runtime we're using (verified to restore full format lists).
+ *   --extractor-args  YouTube player clients that work with the PO-token flow.
+ *                  The default web client dies with HTTP 429/bot-check before a
+ *                  token is even requested; mweb succeeds (bgutil README's
+ *                  documented workaround). Override via YTDLP_YT_CLIENTS, or set
+ *                  it to "" to disable.
+ *   --cookies      YTDLP_COOKIES (Netscape cookies.txt CONTENTS, written to
+ *                  data/yt-cookies.txt) or YTDLP_COOKIES_FILE (path). The
+ *                  documented fix for datacenter-IP bot checks (bgutil README).
+ *   --proxy        YTDLP_PROXY, e.g. a residential proxy URL.
+ */
+export function ytDlpGlobalArgs(): string[] {
+  const args: string[] = [];
+
+  // --plugin-dirs X iterates X's *children*, and each child must itself contain
+  // a `yt_dlp_plugins/` package — so X is the bgutil repo root (whose child
+  // `plugin/` holds the package). Passing `plugin/` itself yields "PO Token
+  // Providers: none" (verified against yt-dlp 2026.08.19).
+  const potRoot = path.join(process.cwd(), "vendor", "bgutil-ytdlp-pot-provider");
+  if (fs.existsSync(path.join(potRoot, "plugin", "yt_dlp_plugins"))) {
+    args.push("--plugin-dirs", potRoot);
+  }
+
+  // Point the n-challenge solver at the node we ourselves run under.
+  const execPath = process.execPath || "";
+  if (/node(\.exe)?$/i.test(path.basename(execPath))) {
+    args.push("--js-runtimes", `node:${execPath}`);
+  }
+
+  // Player clients for the PO-token flow (see doc comment). Env-gated.
+  const clients = (process.env.YTDLP_YT_CLIENTS ?? "mweb,tv,web_safari").trim();
+  if (clients) args.push("--extractor-args", `youtube:player-client=${clients}`);
+
+  const cookies = cookiesFile();
+  if (cookies) args.push("--cookies", cookies);
+
+  const proxy = (process.env.YTDLP_PROXY ?? "").trim();
+  if (proxy) args.push("--proxy", proxy);
+
+  return args;
+}
+
+/** Resolves the cookies file to pass yt-dlp, writing YTDLP_COOKIES contents out. Null = none. */
+function cookiesFile(): string | null {
+  const fileVar = (process.env.YTDLP_COOKIES_FILE ?? "").trim();
+  if (fileVar) {
+    if (fs.existsSync(fileVar)) return fileVar;
+    console.warn(`[ytdlp] YTDLP_COOKIES_FILE points at a missing file: ${fileVar}`);
+    return null;
+  }
+  const inline = (process.env.YTDLP_COOKIES ?? "").trim();
+  if (!inline) return null;
+  const target = path.join(process.cwd(), "data", "yt-cookies.txt");
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    // Normalize pasted CRLF; Netscape format wants one \n-terminated row per cookie.
+    fs.writeFileSync(target, inline.replace(/\r\n/g, "\n") + "\n", { mode: 0o600 });
+    return target;
+  } catch (err) {
+    console.warn(`[ytdlp] could not write cookies file: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
+/**
+ * When yt-dlp fails with YouTube's datacenter-IP bot check, append the fix
+ * instead of leaving the user staring at YouTube's wall of links.
+ * Pure function — exported for tests.
+ */
+export function botCheckAdvice(reason: string): string | null {
+  if (!/not a bot|sign in to confirm/i.test(reason)) return null;
+  return (
+    "YouTube flagged this server's IP address (normal for datacenter/cloud IPs). " +
+    "Fix: export youtube.com cookies while logged into your account — e.g. the " +
+    "'Get cookies.txt LOCALLY' browser extension → cookies.txt — and set the " +
+    "YTDLP_COOKIES env var in Railway to the FULL CONTENTS of that file, then " +
+    "redeploy. Alternative: set YTDLP_PROXY to a residential proxy. The built-in " +
+    "PO-token server (installed on npm ci, see npm run install:pot) mitigates " +
+    "this automatically, but cookies are the guaranteed fix on cloud IPs."
+  );
+}
+
 interface Runner {
   cmd: string;
   baseArgs: string[];
@@ -89,18 +182,24 @@ async function runner(): Promise<Runner> {
 export async function runYtdlp(args: string[], timeoutMs = 20 * 60_000): Promise<string> {
   const r = await runner();
   try {
-    const { stdout } = await execFileAsync(r.cmd, [...r.baseArgs, ...args], {
-      timeout: timeoutMs,
-      windowsHide: true,
-      maxBuffer: 32 * 1024 * 1024,
-    });
+    const { stdout } = await execFileAsync(
+      r.cmd,
+      [...r.baseArgs, ...ytDlpGlobalArgs(), ...args],
+      {
+        timeout: timeoutMs,
+        windowsHide: true,
+        maxBuffer: 32 * 1024 * 1024,
+      }
+    );
     return stdout;
   } catch (err: any) {
     // yt-dlp writes the real reason (geo-block, private video, 404, DRM) to
     // stderr — surface that instead of execFile's generic "Command failed".
     const stderr = String(err?.stderr ?? "").trim();
     const reason = stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" ").trim();
-    throw new Error(reason || `yt-dlp failed: ${err?.message ?? "unknown error"}`);
+    const base = reason || `yt-dlp failed: ${err?.message ?? "unknown error"}`;
+    const advice = botCheckAdvice(base);
+    throw new Error(advice ? `${base}\n\n→ ${advice}` : base);
   }
 }
 

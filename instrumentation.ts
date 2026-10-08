@@ -27,5 +27,11 @@ export async function register(): Promise<void> {
     } catch (err: any) {
       console.warn(`[boot] table check failed: ${err?.message ?? err}`);
     }
+    try {
+      const { startPotServer } = await import("./lib/potServer");
+      await startPotServer();
+    } catch (err: any) {
+      console.warn(`[boot] PO-token server failed: ${err?.message ?? err}`);
+    }
   }
 }

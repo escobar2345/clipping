@@ -7,8 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "postinstall": "node scripts/install-ytdlp.mjs",
-    "install:ytdlp": "node scripts/install-ytdlp.mjs"
+    "postinstall": "node scripts/install-ytdlp.mjs && node scripts/install-pot-provider.mjs",
+    "install:ytdlp": "node scripts/install-ytdlp.mjs",
+    "install:pot": "node scripts/install-pot-provider.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.0",

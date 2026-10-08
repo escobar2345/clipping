@@ -31,6 +31,10 @@
     "**/*.tsx"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    // Vendored third-party code (yt-dlp binary, bgutil PO-token provider) —
+    // built/typed by its own toolchain, not ours. Without this, `tsc` and
+    // `next build` try to type-check the bgutil server sources and fail.
+    "vendor"
   ]
 }
