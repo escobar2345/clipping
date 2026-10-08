@@ -96,8 +96,11 @@ export async function requirePaidPlan(feature: string): Promise<Subscription> {
  * inflated by another account. Returns Infinity for unlimited plans.
  */
 export async function remainingVideoQuota(sub: Subscription | null): Promise<number> {
-  const limit = PLAN_VIDEO_LIMITS[(sub?.plan ?? "free") as PaystackPlan["id"]] ?? 0;
-  if (limit === null) return Infinity;
+  // NOTE: plan limits are `number | null` where null = unlimited — do NOT
+  // coalesce null to 0 here, that would report Pro as "0 left" and 402 every
+  // request. Check for null BEFORE any numeric handling.
+  const limit = PLAN_VIDEO_LIMITS[(sub?.plan ?? "free") as PaystackPlan["id"]];
+  if (limit == null) return Infinity; // unlimited (pro)
   if (limit === 0) return limit;
 
   const ctx = await getAuthContext();
