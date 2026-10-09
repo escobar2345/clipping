@@ -11,6 +11,7 @@ import { downloadVideoFileViaApify } from "./apify";
 import { parseSubtitleText } from "./subtitles";
 import { ffprobePath } from "./mediaBins";
 import type { TranscriptWord } from "./types";
+import { uploadsDir, uploadsUrlPath } from "./userPaths";
 
 const execFileAsync = promisify(execFile);
 
@@ -191,18 +192,6 @@ function ffprobeUrlDuration(u: string): number | undefined {
 /** Stable, filesystem-safe cache key for any URL. */
 function slugFor(url: string): string {
   return "any-" + crypto.createHash("sha1").update(url).digest("hex").slice(0, 12);
-}
-
-function uploadsDir(): string {
-  const dir = path.join(process.cwd(), "public", "uploads");
-  // Read-only filesystems (Vercel): don't crash the caller — caption writes
-  // simply won't persist there; metadata analysis still works.
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-  } catch {
-    /* ignore */
-  }
-  return dir;
 }
 
 /** Detects a readable browser cookie jar. Firefox wins: its cookies.sqlite is
@@ -421,7 +410,7 @@ export async function ensureVideoFileAnyUrl(url: string): Promise<AnyUrlResult> 
   const slug = slugFor(url);
   const dir = uploadsDir();
   const finalPath = path.join(dir, `${slug}.mp4`);
-  const relPath = `/uploads/${slug}.mp4`;
+  const relPath = uploadsUrlPath(`${slug}.mp4`);
 
   if (fs.existsSync(finalPath) && fs.statSync(finalPath).size > 100_000) {
     const meta = await probeMetadata(url);

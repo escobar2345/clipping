@@ -20,8 +20,12 @@ export function videoUrlToLocalPath(videoFilePath: string): string {
   if (/^https?:\/\//.test(videoFilePath)) {
     try {
       const u = new URL(videoFilePath);
-      // /uploads/xxx.mp4 -> <app>/public/uploads/xxx.mp4
-      const rel = u.pathname.replace(/^\//, "");
+      // Both the older /uploads/... URL and the dynamic render-media endpoint
+      // map to the runtime upload directory on disk.
+      const mediaMatch = u.pathname.match(/^\/api\/media\/uploads\/([0-9a-f-]+)\/([^/]+)$/i);
+      const rel = mediaMatch
+        ? path.join("uploads", mediaMatch[1], decodeURIComponent(mediaMatch[2]))
+        : u.pathname.replace(/^\//, "");
       const local = path.join(process.cwd(), "public", rel);
       if (fs.existsSync(local)) return local;
       return "";

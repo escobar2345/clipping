@@ -30,6 +30,9 @@ const PUBLIC_API = [
   "/api/auth/signout",
   "/api/billing/webhook",
   "/api/health",
+  // Remotion's headless browser has no user cookie. The path is constrained
+  // to a UUID folder and a video filename by the media route itself.
+  "/api/media/uploads",
 ];
 
 /** Static media (source videos + rendered clips) stays reachable WITHOUT a

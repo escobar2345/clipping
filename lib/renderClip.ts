@@ -6,8 +6,7 @@ import path from "path";
 import fs from "fs";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
-import { ensureVideoFile, uploadPathToUrl } from "./youtube";
-import { ensureVideoFileAnyUrl, isYouTubeUrl } from "./anywhere";
+import { resolveRenderSourceVideo } from "./renderSource";
 import { downloadEditPlanAssets } from "./higgsfieldAssets";
 import type { EditPlan } from "./types";
 
@@ -50,19 +49,10 @@ export async function renderClipToDisk(
   assertWritableDisk();
 
   const plan: EditPlan = { ...editPlan };
-  if (!plan.sourceVideoPath) {
-    if (!sourceUrl) {
-      throw new Error(
-        "No video file for this plan yet and no source URL was provided — " +
-          "analyze the video again first."
-      );
-    }
-    plan.sourceVideoPath = isYouTubeUrl(sourceUrl)
-      ? // ensureVideoFile returns an absolute on-disk path; Remotion fetches
-        // it over http, so convert it to the served localhost URL.
-        uploadPathToUrl(await ensureVideoFile(sourceUrl))
-      : (await ensureVideoFileAnyUrl(sourceUrl)).fileUrl;
-  }
+  plan.sourceVideoPath = await resolveRenderSourceVideo(
+    plan.sourceVideoPath,
+    sourceUrl ?? plan.sourceUrl
+  );
 
   // Download Higgsfield-generated assets (B-roll, images, effects) so Remotion
   // can composite them. Cached in public/uploads — each asset is downloaded

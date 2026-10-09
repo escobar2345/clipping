@@ -5,8 +5,7 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
 import { withAuth } from "../../../lib/withAuth";
 import { rendersDir, rendersUrlPath } from "../../../lib/userPaths";
-import { ensureVideoFile, uploadPathToUrl } from "../../../lib/youtube";
-import { ensureVideoFileAnyUrl, isYouTubeUrl } from "../../../lib/anywhere";
+import { resolveRenderSourceVideo } from "../../../lib/renderSource";
 import type { EditPlan } from "../../../lib/types";
 import { sanitizeClipId } from "../../../lib/planNormalize";
 import { refineClipCaptions, deepgramMode } from "../../../lib/deepgram";
@@ -51,27 +50,13 @@ export const POST = withAuth(
 
     assertWritableDisk();
 
-    // Analyze is metadata-only (fast), so the actual video FILE is fetched
-    // here — lazily, right before Remotion needs pixels. Downloads are cached
-    // in public/uploads, so each video is fetched exactly once.
+    // Resolve a local upload to the streaming endpoint. If a deploy/restart
+    // removed a cached URL video, re-fetch it before handing it to Remotion.
     const plan: EditPlan = { ...editPlan };
-    if (!plan.sourceVideoPath) {
-      if (!sourceUrl) {
-        return NextResponse.json(
-          {
-            error:
-              "No video file for this plan yet and no source URL was provided — " +
-              "analyze the video again first.",
-          },
-          { status: 400 }
-        );
-      }
-      plan.sourceVideoPath = isYouTubeUrl(sourceUrl)
-        ? // ensureVideoFile returns an absolute on-disk path; Remotion fetches
-          // it over http, so convert it to the served localhost URL.
-          uploadPathToUrl(await ensureVideoFile(sourceUrl))
-        : (await ensureVideoFileAnyUrl(sourceUrl)).fileUrl;
-    }
+    plan.sourceVideoPath = await resolveRenderSourceVideo(
+      plan.sourceVideoPath,
+      sourceUrl ?? plan.sourceUrl
+    );
 
     // Deepgram pass (DEEPGRAM_API_KEY): word-accurate captions for this clip.
     // Skipped when the whole plan was already built from a Deepgram transcript

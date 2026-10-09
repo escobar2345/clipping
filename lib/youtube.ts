@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { execFileSync } from "child_process";
-import { uploadsDir } from "./userPaths";
+import { currentUserId, uploadsDir } from "./userPaths";
 import type { TranscriptWord } from "./types";
 import { parseSubtitleText } from "./subtitles";
 import { downloadMedia, probeMetadata, ytdlpVersion } from "./ytdlp";
@@ -179,7 +179,10 @@ export function ytDlpAvailable(): Promise<string | null> {
  * on-disk path for the Deepgram/reframe steps.
  */
 export function uploadPathToUrl(absPath: string): string {
-  return localFileUrl(uploadsUrlPath(path.basename(absPath)));
+  const userId = currentUserId();
+  return localFileUrl(
+    `/api/media/uploads/${encodeURIComponent(userId)}/${encodeURIComponent(path.basename(absPath))}`
+  );
 }
 
 /**
