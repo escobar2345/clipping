@@ -27,9 +27,13 @@ export async function resolveRenderSourceVideo(
     const isLoopbackUrl =
       url !== null && ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
     if (url && !isLoopbackUrl) {
-      // Preserve user-supplied remote media URLs; only local app files need
-      // the filesystem check and the dynamic media-serving endpoint.
-      return candidate;
+      // Do not hand expiring CDN/Apify URLs to Remotion. Re-cache the original
+      // source (or this URL for legacy plans) on our own server first.
+      const refreshUrl = sourceUrl?.trim() || candidate;
+      if (isYouTubeUrl(refreshUrl)) {
+        return uploadPathToUrl(await ensureVideoFile(refreshUrl));
+      }
+      return (await ensureVideoFileAnyUrl(refreshUrl)).fileUrl;
     }
 
     const localPath = url ? videoUrlToLocalPath(candidate) : candidate;
@@ -42,8 +46,13 @@ export async function resolveRenderSourceVideo(
       return candidate;
     }
 
-    const isOldUploadsUrl = Boolean(url && isLoopbackUrl && url.pathname.startsWith("/uploads/"));
-    if (!isOldUploadsUrl && !path.isAbsolute(candidate)) {
+    const isLocalUploadsUrl = Boolean(
+      url &&
+        isLoopbackUrl &&
+        (url.pathname.startsWith("/uploads/") ||
+          url.pathname.startsWith("/api/media/uploads/"))
+    );
+    if (!isLocalUploadsUrl && !path.isAbsolute(candidate)) {
       return candidate;
     }
   }
