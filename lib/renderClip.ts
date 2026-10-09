@@ -6,7 +6,7 @@ import path from "path";
 import fs from "fs";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
-import { ensureVideoFile } from "./youtube";
+import { ensureVideoFile, uploadPathToUrl } from "./youtube";
 import { ensureVideoFileAnyUrl, isYouTubeUrl } from "./anywhere";
 import { downloadEditPlanAssets } from "./higgsfieldAssets";
 import type { EditPlan } from "./types";
@@ -58,7 +58,9 @@ export async function renderClipToDisk(
       );
     }
     plan.sourceVideoPath = isYouTubeUrl(sourceUrl)
-      ? await ensureVideoFile(sourceUrl)
+      ? // ensureVideoFile returns an absolute on-disk path; Remotion fetches
+        // it over http, so convert it to the served localhost URL.
+        uploadPathToUrl(await ensureVideoFile(sourceUrl))
       : (await ensureVideoFileAnyUrl(sourceUrl)).fileUrl;
   }
 

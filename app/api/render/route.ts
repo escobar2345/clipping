@@ -5,7 +5,7 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
 import { withAuth } from "../../../lib/withAuth";
 import { rendersDir, rendersUrlPath } from "../../../lib/userPaths";
-import { ensureVideoFile } from "../../../lib/youtube";
+import { ensureVideoFile, uploadPathToUrl } from "../../../lib/youtube";
 import { ensureVideoFileAnyUrl, isYouTubeUrl } from "../../../lib/anywhere";
 import type { EditPlan } from "../../../lib/types";
 import { sanitizeClipId } from "../../../lib/planNormalize";
@@ -67,7 +67,9 @@ export const POST = withAuth(
         );
       }
       plan.sourceVideoPath = isYouTubeUrl(sourceUrl)
-        ? await ensureVideoFile(sourceUrl)
+        ? // ensureVideoFile returns an absolute on-disk path; Remotion fetches
+          // it over http, so convert it to the served localhost URL.
+          uploadPathToUrl(await ensureVideoFile(sourceUrl))
         : (await ensureVideoFileAnyUrl(sourceUrl)).fileUrl;
     }
 

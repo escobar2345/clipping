@@ -6,6 +6,7 @@ import type { TranscriptWord } from "./types";
 import { parseSubtitleText } from "./subtitles";
 import { downloadMedia, probeMetadata, ytdlpVersion } from "./ytdlp";
 import { ffmpegPath } from "./mediaBins";
+import { uploadsUrlPath } from "./userPaths";
 import { downloadVideoFileViaApify } from "./apify";
 
 /**
@@ -163,6 +164,22 @@ export function remuxIfNeeded(dir: string, id: string): boolean {
 /** Whether yt-dlp is usable — surfaced by the API so the UI can warn early. */
 export function ytDlpAvailable(): Promise<string | null> {
   return ytdlpVersion();
+}
+
+/**
+ * Converts an absolute on-disk upload path (as returned by `ensureVideoFile`)
+ * into the localhost URL Remotion's <OffthreadVideo> can fetch.
+ *
+ * `public/` is served at the web root, so an absolute path like
+ * `<cwd>/public/uploads/<userId>/x.mp4` must become
+ * `http://127.0.0.1:3000/uploads/<userId>/x.mp4` — NOT
+ * `http://127.0.0.1:3000/public/uploads/...` and never the raw `/app/...`
+ * path (which webpack resolves into the 404 you'd otherwise get at render
+ * time). `lib/visualScan.ts`'s `videoUrlToLocalPath` reverses this back to the
+ * on-disk path for the Deepgram/reframe steps.
+ */
+export function uploadPathToUrl(absPath: string): string {
+  return localFileUrl(uploadsUrlPath(path.basename(absPath)));
 }
 
 /**
