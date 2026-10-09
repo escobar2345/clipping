@@ -434,3 +434,131 @@ export async function fetchVideoIntel(url: string): Promise<IntelResult> {
 
   return { intel, transcriptSource, warnings };
 }
+
+/** Coerce a direct media URL out of a downloader actor's dataset item. */
+function pickDownloadUrl(item: any): string | null {
+  if (!item || typeof item !== "object") return null;
+  const isHttp = (s: any) => typeof s === "string" && /^https?:\/\//i.test(s);
+
+  // Explicit "download"/"mp4" fields first, then generic.
+  const preferred = [
+    "downloadUrl", "videoDownloadUrl", "mp4Url", "mp4", "directUrl",
+    "mediaUrl", "fileUrl", "download_url", "video_url", "url", "link", "videoUrl",
+  ];
+  for (const k of preferred) {
+    const v = (item as any)[k];
+    if (isHttp(v)) return v as string;
+    if (v && typeof v === "object" && isHttp(v.url)) return v.url;
+  }
+
+  // Some actors return a list of formats/streams instead of one URL.
+  for (const list of [item.formats, item.streams, item.video, item.media]) {
+    if (!Array.isArray(list)) continue;
+    const mp4 = list.find((f: any) => f && isHttp(f.url) && /\.mp4(\?|$)/i.test(f.url));
+    const any = list.find((f: any) => f && isHttp(f.url));
+    const chosen = mp4 ?? any;
+    if (chosen?.url) return String(chosen.url);
+  }
+  return null;
+}
+
+function safeSize(p: string): number {
+  try {
+    return fs.statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+function normalizeVideoExt(raw: string): string {
+  const e = (raw || "").toLowerCase();
+  return [".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi"].includes(e) ? e : ".mp4";
+}
+
+/**
+ * Downloads the actual video FILE through a configurable Apify downloader actor
+ * and streams it to `<outDir>/<outName><ext>`, returning the local path.
+ *
+ * This is the Apify path that does the real "get the video" work you asked for,
+ * for YouTube AND any site: it runs a video-downloader actor (which returns a
+ * direct media URL), then fetches that URL to disk. Callers fall back to yt-dlp
+ * when this throws (actor unconfigured, run failed, or no media URL returned).
+ *
+ *   APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID  YouTube downloader actor (preferred for YT)
+ *   APIFY_GENERAL_DOWNLOADER_ACTOR_ID   any-site downloader actor (for other links)
+ *   APIFY_DOWNLOADER_ACTOR_ID           shared fallback for either
+ *
+ * Popular choices (paste the id, not the URL):
+ *   YouTube:  convertfleetdotonline~youtube-downloader  (or wyuhhqn~youtube-video-downloader)
+ *   Any site: klzzixjdksonskaplaif~video-downloader
+ */
+export async function downloadVideoFileViaApify(opts: {
+  url: string;
+  outDir: string;
+  outName: string;
+  timeoutMs?: number;
+}): Promise<string> {
+  const { url, outDir, outName, timeoutMs = 20 * 60_000 } = opts;
+  const sourceUrl = url.trim();
+  const videoId = extractVideoId(sourceUrl);
+
+  const platformActor = videoId
+    ? process.env.APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID
+    : process.env.APIFY_GENERAL_DOWNLOADER_ACTOR_ID;
+  const actorId =
+    (platformActor ?? "").trim() || (process.env.APIFY_DOWNLOADER_ACTOR_ID ?? "").trim();
+
+  if (!actorId) {
+    throw new Error(
+      "No Apify video-downloader actor is configured. Set APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID " +
+        "(and/or APIFY_DOWNLOADER_ACTOR_ID) in .env.local to a downloader actor id from the " +
+        "Apify Store — e.g. convertfleetdotonline~youtube-downloader. Leave it unset to keep " +
+        "downloading via yt-dlp instead."
+    );
+  }
+
+  const items = await runActor(
+    {
+      startUrls: [{ url: sourceUrl }],
+      url: sourceUrl,
+      videoUrl: sourceUrl,
+      videoUrls: [sourceUrl],
+      maxItems: 1,
+    },
+    actorId
+  );
+  if (!items.length) {
+    throw new Error("The Apify downloader actor returned no data for this URL.");
+  }
+  const downloadUrl = pickDownloadUrl(items[0]);
+  if (!downloadUrl) {
+    throw new Error(
+      "The Apify downloader actor didn't return a direct video URL. Make sure the actor id " +
+        "is a video-downloader (one whose output includes an mp4/downloadUrl field)."
+    );
+  }
+
+  fs.mkdirSync(outDir, { recursive: true });
+  const ext = normalizeVideoExt(path.extname(new URL(downloadUrl).pathname));
+  const target = path.join(outDir, `${outName}${ext}`);
+
+  const res = await fetch(downloadUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok || !res.body) {
+    throw new Error(
+      `Fetching the video from Apify's download URL failed (HTTP ${res.status}).`
+    );
+  }
+
+  const { Readable } = await import("stream");
+  const { pipeline } = await import("stream/promises");
+  const tmp = `${target}.part`;
+  await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(tmp));
+  fs.renameSync(tmp, target);
+
+  if (safeSize(target) < 100_000) {
+    throw new Error(
+      `The Apify download URL produced only ${safeSize(target)} bytes — not a usable video.`
+    );
+  }
+  return target;
+}

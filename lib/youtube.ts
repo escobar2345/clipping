@@ -6,6 +6,7 @@ import type { TranscriptWord } from "./types";
 import { parseSubtitleText } from "./subtitles";
 import { downloadMedia, probeMetadata, ytdlpVersion } from "./ytdlp";
 import { ffmpegPath } from "./mediaBins";
+import { downloadVideoFileViaApify } from "./apify";
 
 /**
  * Downloads a YouTube video to a local file and returns its path.
@@ -180,6 +181,23 @@ export async function ensureVideoFile(youtubeUrl: string): Promise<string> {
 
   const cached = cachedVideoPath(videoId);
   if (cached) return cached;
+
+  // Primary downloader: a configurable Apify video-downloader actor — this is
+  // what you asked for, Apify fetches the actual video file. Any failure (actor
+  // unconfigured, run error, no media URL) falls back to yt-dlp so a YouTube
+  // link always still works.
+  try {
+    return await downloadVideoFileViaApify({
+      url: youtubeUrl,
+      outDir: uploadsDir(),
+      outName: videoId,
+    });
+  } catch (err) {
+    console.warn(
+      `[apify-download] falling back to yt-dlp for ${videoId}: ` +
+        `${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 
   const { file } = await downloadMedia({
     url: youtubeUrl,

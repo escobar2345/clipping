@@ -7,6 +7,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { withRetry } from "./retry";
 import { localFileUrl, remuxIfNeeded } from "./youtube";
+import { downloadVideoFileViaApify } from "./apify";
 import { parseSubtitleText } from "./subtitles";
 import { ffprobePath } from "./mediaBins";
 import type { TranscriptWord } from "./types";
@@ -529,6 +530,35 @@ export async function ensureVideoFileAnyUrl(url: string): Promise<AnyUrlResult> 
       title: item.name,
       durationSec: ffprobeDuration(finalPath),
     };
+  }
+
+  // Primary downloader: a configurable Apify downloader actor (works for any
+  // site). Falls through to yt-dlp below when it's unconfigured or fails.
+  try {
+    await downloadVideoFileViaApify({ url, outDir: dir, outName: slug });
+    remuxIfNeeded(dir, slug);
+    if (fs.existsSync(finalPath) && fs.statSync(finalPath).size > 100_000) {
+      let meta: { title?: string; durationSec?: number } = {};
+      try {
+        meta = await probeMetadata(url);
+      } catch {
+        /* metadata is best-effort; duration falls back to ffprobe below */
+      }
+      return {
+        fileUrl: localFileUrl(relPath),
+        transcript: readSubtitles(dir, slug),
+        title: meta.title,
+        durationSec:
+          meta.durationSec && meta.durationSec > 0
+            ? meta.durationSec
+            : ffprobeDuration(finalPath),
+      };
+    }
+  } catch (err) {
+    console.warn(
+      `[apify-download] falling back to yt-dlp for ${slug}: ` +
+        `${err instanceof Error ? err.message : String(err)}`
+    );
   }
 
   // --write-auto-subs + --convert-subs: get caption tracks wherever the site
