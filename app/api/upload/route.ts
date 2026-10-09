@@ -102,8 +102,9 @@ export const POST = withAuth(
       return NextResponse.json(
         {
           error:
-            "Couldn't read the uploaded video (ffprobe failed). Is ffmpeg/ffprobe " +
-            "installed and on PATH, and is the file a playable video?",
+            "Couldn't read the uploaded video (ffprobe failed). Install ffmpeg, " +
+            "set FFPROBE_PATH in .env.local, or verify the file is a playable video " +
+            "(GET /api/health shows whether ffmpeg/ffprobe resolve).",
         },
         { status: 400 }
       );

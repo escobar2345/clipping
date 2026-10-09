@@ -5,6 +5,7 @@ import path from "path";
 import { curlChatOnce } from "./chat";
 import { extractFramesAtTimes, getVideoDurationSec } from "./ffmpegFrames";
 import { withRetry } from "./retry";
+import { ffmpegPath } from "./mediaBins";
 import type { VideoIntel, VisualContext, FrameNote } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -46,7 +47,7 @@ export async function detectSceneCuts(
   try {
     // ffmpeg writes the showinfo lines to STDERR; parsing that is reliable.
     const { stderr } = await execFileAsync(
-      "ffmpeg",
+      ffmpegPath(),
       [
         "-i", videoPath,
         "-vf", `select='gt(scene,${sensitivity})',showinfo`,

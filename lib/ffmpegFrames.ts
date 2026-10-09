@@ -3,6 +3,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { ffmpegPath, ffprobePath } from "./mediaBins";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,7 +29,7 @@ export async function extractFramesAsDataUris(
     for (let i = 1; i <= count; i++) {
       const t = (step * i).toFixed(2);
       const outFile = path.join(tmpDir, `frame-${i}.jpg`);
-      await execFileAsync("ffmpeg", [
+      await execFileAsync(ffmpegPath(), [
         "-ss", t,
         "-i", videoPath,
         "-frames:v", "1",
@@ -61,7 +62,7 @@ export async function extractFramesAtTimes(
       const outFile = path.join(tmpDir, `f-${t.toFixed(2)}.jpg`);
       try {
         await execFileAsync(
-          "ffmpeg",
+          ffmpegPath(),
           [
             "-ss", t.toFixed(3),
             "-i", videoPath,
@@ -91,7 +92,7 @@ export async function extractFramesAtTimes(
  * (it ships with ffmpeg). Returns 0 if the duration can't be read.
  */
 export async function getVideoDurationSec(videoPath: string): Promise<number> {
-  const { stdout } = await execFileAsync("ffprobe", [
+  const { stdout } = await execFileAsync(ffprobePath(), [
     "-v", "error",
     "-show_entries", "format=duration",
     "-of", "default=noprint_wrappers=1:nokey=1",

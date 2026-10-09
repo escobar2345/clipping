@@ -4,6 +4,7 @@ import type { ClipPlan, CropKeyframe } from "./types";
 import { clipSegments, editedDurationSec, sourceToEdited } from "./timeline";
 import { clusterDetections, runCascade, unpackCascade, type Classifier } from "./vendor/pico";
 import { FACEFINDER_B64 } from "./vendor/facefinder";
+import { ffmpegPath, ffprobePath } from "./mediaBins";
 
 const execFileAsync = promisify(execFile);
 
@@ -150,7 +151,7 @@ export function buildSubjectPath(
 async function probeSize(videoPath: string): Promise<{ width: number; height: number } | null> {
   try {
     const { stdout } = await execFileAsync(
-      "ffprobe",
+      ffprobePath(),
       [
         "-v", "error",
         "-select_streams", "v:0",
@@ -178,7 +179,7 @@ async function grabGrayFrames(
   fps: number
 ): Promise<Uint8Array[]> {
   const { stdout } = (await execFileAsync(
-    "ffmpeg",
+    ffmpegPath(),
     [
       "-v", "error",
       "-ss", startSec.toFixed(3),

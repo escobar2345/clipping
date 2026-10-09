@@ -5,6 +5,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
 import fs from "fs";
+import { ffmpegPath } from "./mediaBins";
 const execAsync = promisify(execFile);
 
 export async function cutStoryTeaser(renderedRelPath: string, teaserSec = 15): Promise<string> {
@@ -16,7 +17,7 @@ export async function cutStoryTeaser(renderedRelPath: string, teaserSec = 15): P
   const outFile = `${base}-story.mp4`;
   const outAbs = path.join(process.cwd(), "public", "renders", outFile);
   if (!fs.existsSync(outAbs)) {
-    await execAsync("ffmpeg", ["-y", "-i", src, "-t", String(teaserSec), "-c", "copy", outAbs], { timeout: 120000 } as any);
+    await execAsync(ffmpegPath(), ["-y", "-i", src, "-t", String(teaserSec), "-c", "copy", outAbs], { timeout: 120000 } as any);
   }
   return `/renders/${outFile}`;
 }

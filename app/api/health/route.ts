@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { DEPLOYED_HOST, isPublicBaseUrl, publicOrigin } from "../../../lib/tunnel";
 import { checkDatabase } from "../../../lib/db";
 import { ensureTables } from "../../../lib/dbInit";
+import { resolveMediaBin } from "../../../lib/mediaBins";
+import { ytdlpVersion } from "../../../lib/ytdlp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,6 +82,15 @@ export async function GET(req: NextRequest) {
       reachable: db.ok,
       error: db.ok ? null : db.error,
       migrated,
+    },
+    // Media toolchain: Load/Duration/scene-detect need ffprobe+ffmpeg; downloads
+    // need yt-dlp (vendored at postinstall). null = "not found anywhere", which
+    // is exactly what turns into `spawn ffprobe ENOENT` in the UI.
+    binaries: {
+      ffmpeg: resolveMediaBin("ffmpeg"),
+      ffprobe: resolveMediaBin("ffprobe"),
+      ytDlp: await ytdlpVersion(),
+      pathHasNix: (process.env.PATH ?? "").includes("/nix/"),
     },
     hint:
       "Every `placeholder: true` means the Railway variable still holds the " +

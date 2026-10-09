@@ -7,6 +7,7 @@ import path from "path";
 import type { ClipPlan, TranscriptWord } from "./types";
 import { dataDir } from "./userPaths";
 import { retimeClipWithWords, tightenEnabled } from "./tighten";
+import { ffmpegPath } from "./mediaBins";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,7 +54,7 @@ async function extractAudio(
   if (startSec !== undefined) args.push("-ss", startSec.toFixed(3));
   if (durSec !== undefined) args.push("-t", durSec.toFixed(3));
   args.push("-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", "-y", out);
-  await execFileAsync("ffmpeg", args, {
+  await execFileAsync(ffmpegPath(), args, {
     timeout: 20 * 60_000,
     windowsHide: true,
     maxBuffer: 16 * 1024 * 1024,

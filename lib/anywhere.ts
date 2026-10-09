@@ -8,6 +8,7 @@ import { pipeline } from "stream/promises";
 import { withRetry } from "./retry";
 import { localFileUrl, remuxIfNeeded } from "./youtube";
 import { parseSubtitleText } from "./subtitles";
+import { ffprobePath } from "./mediaBins";
 import type { TranscriptWord } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -170,7 +171,7 @@ function notVideoFileError(p: string): Error {
 function ffprobeUrlDuration(u: string): number | undefined {
   try {
     const out = execFileSync(
-      "ffprobe",
+      ffprobePath(),
       [
         "-v", "error",
         "-show_entries", "format=duration",
@@ -287,7 +288,7 @@ export function humanizeYtDlpError(stderr: string): string {
 function ffprobeDuration(file: string): number {
   try {
     const out = execFileSync(
-      "ffprobe",
+      ffprobePath(),
       [
         "-v", "error",
         "-show_entries", "format=duration",

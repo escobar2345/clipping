@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
 import path from "path";
+import { resolveMediaBin } from "./mediaBins";
 
 /**
  * yt-dlp wrapper — SERVER-SIDE ONLY.
@@ -57,6 +58,13 @@ const MISSING_BIN_HINT =
  */
 export function ytDlpGlobalArgs(): string[] {
   const args: string[] = [];
+
+  // --ffmpeg-location: yt-dlp finds ffmpeg ONLY via its own PATH lookup, and
+  // without it the video+audio merge silently degrades to an audio-less
+  // `<id>.fNNN.mp4` stream fragment. Point it at our multi-location resolver
+  // (PATH / nix store / winget / env) instead of trusting yt-dlp's guess.
+  const ffmpeg = resolveMediaBin("ffmpeg");
+  if (ffmpeg) args.push("--ffmpeg-location", ffmpeg);
 
   // --plugin-dirs X iterates X's *children*, and each child must itself contain
   // a `yt_dlp_plugins/` package — so X is the bgutil repo root (whose child
@@ -346,7 +354,11 @@ export async function downloadMedia(opts: {
   if (!file) {
     throw new Error(
       `yt-dlp reported success but no video file appeared in ${outDir}. ` +
-        `Check the dev-server log for the yt-dlp output.`
+        (resolveMediaBin("ffmpeg")
+          ? `Check the dev-server log for the yt-dlp output.`
+          : `ffmpeg could not be resolved either (set FFMPEG_PATH or add ffmpeg to ` +
+            `PATH) — without it yt-dlp cannot merge video+audio streams. Also check ` +
+            `the dev-server log.`)
     );
   }
   return { file, subtitleFile };
@@ -362,6 +374,8 @@ function findByExt(outDir: string, outName: string, exts: string[]): string | nu
   for (const entry of fs.readdirSync(outDir)) {
     if (!entry.startsWith(outName)) continue;
     if (entry.endsWith(".part") || entry.endsWith(".ytdl")) continue;
+    // Unmerged stream fragment (`outName.f399.mp4`) — never the real result.
+    if (/\.f\d+\.[^.]+$/.test(entry)) continue;
     if (!exts.includes(path.extname(entry).toLowerCase())) continue;
     const full = path.join(outDir, entry);
     const size = safeSize(full);

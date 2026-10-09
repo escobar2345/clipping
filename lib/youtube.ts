@@ -5,6 +5,7 @@ import { uploadsDir } from "./userPaths";
 import type { TranscriptWord } from "./types";
 import { parseSubtitleText } from "./subtitles";
 import { downloadMedia, probeMetadata, ytdlpVersion } from "./ytdlp";
+import { ffmpegPath } from "./mediaBins";
 
 /**
  * Downloads a YouTube video to a local file and returns its path.
@@ -62,6 +63,9 @@ export function cachedVideoPath(videoId: string): string | null {
   const dir = uploadsDir();
   for (const entry of fs.readdirSync(dir)) {
     if (!entry.startsWith(videoId)) continue;
+    // yt-dlp's unmerged stream fragment (e.g. `id.f399.mp4`) — video-only and
+    // audio-less. Skipping it forces a fresh download+merge once ffmpeg resolves.
+    if (/\.f\d+\.[^.]+$/.test(entry)) continue;
     const ext = path.extname(entry).toLowerCase();
     if (![".mp4", ".m4v", ".mov", ".webm", ".mkv"].includes(ext)) continue;
     const full = path.join(dir, entry);
@@ -145,7 +149,7 @@ export function remuxIfNeeded(dir: string, id: string): boolean {
   }
   try {
     execFileSync(
-      "ffmpeg",
+      ffmpegPath(),
       ["-y", "-i", path.join(dir, candidates[0]), "-c", "copy", finalPath],
       { windowsHide: true, timeout: 120_000 }
     );
