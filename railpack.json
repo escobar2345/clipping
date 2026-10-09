@@ -3,6 +3,7 @@
   "provider": "node",
   "deploy": {
     "aptPackages": [
+      "...",
       "ffmpeg",
       "libnss3",
       "libnspr4",

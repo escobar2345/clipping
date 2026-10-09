@@ -315,7 +315,11 @@ export async function loadStoredUpload(file: string): Promise<ActionOutcome> {
   }
   const durationSec = await getVideoDurationSec(target);
   if (!durationSec || durationSec < 1) {
-    throw new Error(`Couldn't read video duration from ${file}`);
+    throw new Error(
+      `Couldn't read a playable video track from ${file}. ` +
+        `If it looks like <id>.f399.mp4, it's an unfinished audio-less download fragment — ` +
+        `delete it and re-analyze the URL with ffmpeg installed.`
+    );
   }
   const intel: VideoIntel = {
     sourceUrl: "",

@@ -41,7 +41,43 @@ export const POST = withAuth(async (req: Request) => {
       );
     }
 
-    const durationSec = await getVideoDurationSec(target);
+    // yt-dlp's unmerged stream fragment (e.g. `<id>.f399.mp4`) — video-only and
+    // audio-less, left behind when ffmpeg wasn't reachable at download time.
+    // It ends in .mp4 so the whitelist above passes it; reject it here with
+    // the real fix instead of a confusing probe failure.
+    if (/\.f\d+\.[^.]+$/.test(file)) {
+      return NextResponse.json(
+        {
+          error:
+            `${file} is an unfinished download fragment (video-only, no audio) ` +
+            `left when ffmpeg was missing during download. Delete it and re-analyze ` +
+            `the URL — with ffmpeg installed the download merges to a playable mp4. ` +
+            `(GET /api/health shows whether ffmpeg/ffprobe resolve.)`,
+        },
+        { status: 400 }
+      );
+    }
+
+    let durationSec: number;
+    try {
+      durationSec = await getVideoDurationSec(target);
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (/ENOENT/i.test(msg) || /not found/i.test(msg)) {
+        return NextResponse.json(
+          {
+            error:
+              `Couldn't probe ${file}: ffmpeg/ffprobe isn't reachable from the app ` +
+              `server (spawn ENOENT = the ffprobe *program* is missing, not your ` +
+              `video). Restart the dev server after installing ffmpeg, or set ` +
+              `FFPROBE_PATH in .env.local. ` +
+              `(GET /api/health shows whether ffmpeg/ffprobe resolve.)`,
+          },
+          { status: 500 }
+        );
+      }
+      throw err;
+    }
     if (!durationSec || durationSec < 1) {
       return NextResponse.json(
         { error: `Couldn't read video duration from ${file}` },

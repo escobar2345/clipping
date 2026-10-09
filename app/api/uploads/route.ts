@@ -26,7 +26,10 @@ export const GET = withAuth(async () => {
     const dir = uploadsDir();
     uploads = fs
       .readdirSync(dir)
-      .filter((f) => VIDEO_EXT.test(f))
+      // Exclude yt-dlp's unmerged stream fragments (`<id>.f399.mp4`): they end
+      // in .mp4 so VIDEO_EXT passes them, but they're video-only/audio-less
+      // leftovers from a download where ffmpeg wasn't available to merge.
+      .filter((f) => VIDEO_EXT.test(f) && !/\.f\d+\.[^.]+$/.test(f))
       .map((f) => {
         const st = fs.statSync(path.join(dir, f));
         return {

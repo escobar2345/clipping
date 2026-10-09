@@ -81,6 +81,9 @@ function findBin(bin: MediaBin): string | null {
   }
 
   // 3) Known locations.
+  // Railpack note: the Railway service now builds with Railpack (railpack.json),
+  // NOT nixpacks.toml — so "ffmpeg" must stay in railpack.json's
+  // deploy.aptPackages or /usr/bin+friends are empty in the container.
   for (const candidate of knownLocations(exe)) {
     if (runs(candidate)) return candidate;
   }
