@@ -1,13 +1,13 @@
 import React from "react";
 import {
   AbsoluteFill,
-  OffthreadVideo,
   useCurrentFrame,
   useVideoConfig,
   interpolate,
   spring,
   Sequence,
 } from "remotion";
+import { Video } from "@remotion/media";
 import type { CaptionCue, ClipPlan } from "../lib/types";
 import { segmentFrames } from "../lib/timeline";
 import {
@@ -85,25 +85,28 @@ function useCropPlacement(clip: ClipPlan, relSec: number) {
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
   if (crop.aspect >= frameAspect) {
-    // wider than 9:16 (the normal case): video fills the height, slide sideways
-    const fullW = SHORT_HEIGHT * crop.aspect;
-    const overflow = fullW - SHORT_WIDTH;
-    const left = clamp(x * fullW - SHORT_WIDTH / 2, 0, Math.max(overflow, 0));
+    // Wide source: crop to the 9:16 width, then slide the crop to follow x.
+    const cropWidth = frameAspect / crop.aspect;
+    const left = clamp(x - cropWidth / 2, 0, 1 - cropWidth);
     return {
-      objectPosition: `${overflow > 0 ? (left / overflow) * 100 : 50}% 50%`,
-      // where the face sits inside the visible frame => zoom in around it
-      focusX: clamp((x * fullW - left) / SHORT_WIDTH, 0.2, 0.8),
+      cropLeft: left,
+      cropRight: 1 - left - cropWidth,
+      cropTop: 0,
+      cropBottom: 0,
+      focusX: clamp((x - left) / cropWidth, 0.2, 0.8),
       focusY: clamp(y, 0.25, 0.65),
     };
   }
-  // taller than 9:16: video fills the width, slide up/down
-  const fullH = SHORT_WIDTH / crop.aspect;
-  const overflow = fullH - SHORT_HEIGHT;
-  const top = clamp(y * fullH - SHORT_HEIGHT / 2, 0, Math.max(overflow, 0));
+  // Tall source: crop to the 9:16 height, then slide the crop to follow y.
+  const cropHeight = crop.aspect / frameAspect;
+  const top = clamp(y - cropHeight / 2, 0, 1 - cropHeight);
   return {
-    objectPosition: `50% ${overflow > 0 ? (top / overflow) * 100 : 50}%`,
+    cropLeft: 0,
+    cropRight: 0,
+    cropTop: top,
+    cropBottom: 1 - top - cropHeight,
     focusX: 0.5,
-    focusY: clamp((y * fullH - top) / SHORT_HEIGHT, 0.25, 0.65),
+    focusY: clamp((y - top) / cropHeight, 0.25, 0.65),
   };
 }
 
@@ -235,15 +238,20 @@ export const ShortClipComposition: React.FC<ShortClipProps> = ({ sourceVideoPath
             a single piece, exactly as before. */}
         {segmentFrames(clip, fps).map((seg, i) => (
           <Sequence key={i} from={seg.outFrom} durationInFrames={seg.frames}>
-            <OffthreadVideo
+            <Video
               src={sourceVideoPath}
-              startFrom={seg.srcFrom}
-              endAt={seg.srcFrom + seg.frames}
+              trimBefore={seg.srcFrom}
+              durationInFrames={seg.frames}
+              objectFit="cover"
+              cropLeft={placement?.cropLeft}
+              cropRight={placement?.cropRight}
+              cropTop={placement?.cropTop}
+              cropBottom={placement?.cropBottom}
+              disallowFallbackToOffthreadVideo
+              delayRenderTimeoutInMilliseconds={120_000}
               style={{
                 width: "100%",
                 height: "100%",
-                objectFit: "cover",
-                objectPosition: placement ? placement.objectPosition : "50% 50%",
               }}
             />
           </Sequence>

@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { Readable } from "stream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,15 +22,31 @@ const CONTENT_TYPES: Record<string, string> = {
 
 type RouteContext = { params: { userId: string; file: string } };
 
+function mediaCorsHeaders(): HeadersInit {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Headers": "Range, Content-Type",
+    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, Content-Type",
+  };
+}
+
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: mediaCorsHeaders() });
+}
+
 function fileResponse(request: Request, { userId, file }: RouteContext["params"], headOnly: boolean) {
   if (!UUID_RE.test(userId) || path.basename(file) !== file || !VIDEO_EXT.test(file)) {
-    return new Response("Invalid media path", { status: 400 });
+    return new Response("Invalid media path", { status: 400, headers: mediaCorsHeaders() });
   }
 
   const uploadsRoot = path.resolve(process.cwd(), "public", "uploads");
   const filePath = path.resolve(uploadsRoot, userId, file);
   if (!filePath.startsWith(`${uploadsRoot}${path.sep}`) || !fs.existsSync(filePath)) {
-    return new Response("Source video file is not present on this server", { status: 404 });
+    return new Response("Source video file is not present on this server", {
+      status: 404,
+      headers: mediaCorsHeaders(),
+    });
   }
 
   const size = fs.statSync(filePath).size;
@@ -42,7 +59,7 @@ function fileResponse(request: Request, { userId, file }: RouteContext["params"]
     if (!match || (!match[1] && !match[2])) {
       return new Response(null, {
         status: 416,
-        headers: { "Content-Range": `bytes */${size}` },
+        headers: { ...mediaCorsHeaders(), "Content-Range": `bytes */${size}` },
       });
     }
     if (!match[1]) {
@@ -55,13 +72,14 @@ function fileResponse(request: Request, { userId, file }: RouteContext["params"]
     if (start >= size || start > end) {
       return new Response(null, {
         status: 416,
-        headers: { "Content-Range": `bytes */${size}` },
+        headers: { ...mediaCorsHeaders(), "Content-Range": `bytes */${size}` },
       });
     }
     status = 206;
   }
 
   const headers = new Headers({
+    ...mediaCorsHeaders(),
     "Accept-Ranges": "bytes",
     "Cache-Control": "private, no-store",
     "Content-Length": String(end - start + 1),
@@ -72,22 +90,7 @@ function fileResponse(request: Request, { userId, file }: RouteContext["params"]
 
   const body = headOnly
     ? null
-    : (() => {
-        let fileStream: fs.ReadStream | undefined;
-        return new ReadableStream<Uint8Array>({
-        start(controller) {
-          fileStream = fs.createReadStream(filePath, { start, end });
-          fileStream.on("data", (chunk: Buffer | string) => {
-            controller.enqueue(typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk);
-          });
-          fileStream.on("end", () => controller.close());
-          fileStream.on("error", (error) => controller.error(error));
-        },
-        cancel() {
-          fileStream?.destroy();
-        },
-      });
-    })();
+    : (Readable.toWeb(fs.createReadStream(filePath, { start, end })) as ReadableStream<Uint8Array>);
   return new Response(body, { status, headers });
 }
 

@@ -14,6 +14,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.0",
     "@remotion/bundler": "^4.0.527",
+    "@remotion/media": "4.0.527",
     "@remotion/renderer": "^4.0.527",
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.1",
