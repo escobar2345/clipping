@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "postinstall": "node scripts/install-ytdlp.mjs && node scripts/install-pot-provider.mjs",
+    "postinstall": "node scripts/install-ytdlp.mjs && node scripts/install-pot-provider.mjs && node scripts/install-remotion-browser.mjs",
     "install:ytdlp": "node scripts/install-ytdlp.mjs",
     "install:pot": "node scripts/install-pot-provider.mjs"
   },

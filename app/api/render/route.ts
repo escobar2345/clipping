@@ -102,12 +102,26 @@ export const POST = withAuth(
     const clipId = sanitizeClipId(editPlan.clips[clipIndex].clipId, `clip-${clipIndex}`);
     const outputLocation = path.join(outDir, `${clipId}.mp4`);
 
+    console.info(`[render] starting Remotion render clip=${clipId} index=${clipIndex}`);
+    let lastLoggedPercent = -10;
     await renderMedia({
       composition,
       serveUrl: bundled,
       codec: "h264",
       outputLocation,
       inputProps,
+      onStart: ({ frameCount, resolvedConcurrency }) => {
+        console.info(
+          `[render] Remotion started clip=${clipId} frames=${frameCount} concurrency=${resolvedConcurrency}`
+        );
+      },
+      onProgress: ({ progress, renderedFrames }) => {
+        const percent = Math.floor(progress * 100);
+        if (percent === 100 || percent >= lastLoggedPercent + 10) {
+          lastLoggedPercent = percent;
+          console.info(`[render] progress clip=${clipId} percent=${percent} frames=${renderedFrames}`);
+        }
+      },
     });
 
     // Record provenance so the UI's "already rendered" gallery + hydration can
@@ -135,6 +149,7 @@ export const POST = withAuth(
 
     return NextResponse.json({ url: rendersUrlPath(`${clipId}.mp4`) });
   } catch (err: any) {
+    console.error("[render] request failed:", err?.stack ?? err);
     return NextResponse.json({ error: err.message ?? "Render failed" }, { status: 500 });
   }
   }
