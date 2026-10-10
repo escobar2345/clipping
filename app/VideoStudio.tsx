@@ -343,7 +343,7 @@ export default function VideoStudio() {
       const data = await callApi(
         "/api/analyze",
         { youtubeUrl, url: youtubeUrl },
-        300_000
+        150_000
       );
       setIntel(data.intel);
       // Analyze is metadata-only — the actual video file downloads lazily at
