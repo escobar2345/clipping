@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { withRetry } from "./retry";
-import { extractTranscript, parseSubtitleText } from "./subtitles";
-import { extractVideoId, uploadsDir } from "./youtube";
-import { downloadSubtitles, probeMetadata } from "./ytdlp";
+import { extractTranscript } from "./subtitles";
+import { extractVideoId } from "./youtube";
+import { probeMetadata } from "./ytdlp";
 import type { TranscriptWord, VideoIntel } from "./types";
 
 /**
@@ -14,9 +14,9 @@ import type { TranscriptWord, VideoIntel } from "./types";
  * differently, so `mapItem()` coerces the common variants instead of assuming
  * one schema — see README ("lib/apify.ts has placeholder field names").
  *
- * When the actor returns NO transcript this falls back to the platform's own
- * caption track via yt-dlp (free, and it has real word timings). Deepgram gets
- * the last word at edit-plan time if there are no captions either.
+ * When the actor returns NO transcript, Analyze returns without trying a slow
+ * yt-dlp caption scrape. Deepgram can transcribe at edit-plan time; without it,
+ * the planner uses visual-only analysis.
  *
  *   APIFY_TOKEN              required, from apify.com → Settings → Integrations
  *   APIFY_YOUTUBE_ACTOR_ID   required, e.g. "streamers~youtube-scraper"
@@ -322,17 +322,6 @@ async function metadataFromYtdlp(url: string) {
   };
 }
 
-/** yt-dlp fallback: the platform's own caption track as a word transcript. */
-async function captionsFromYtdlp(url: string, stem: string): Promise<TranscriptWord[]> {
-  const sub = await downloadSubtitles({ url, outDir: uploadsDir(), outName: stem });
-  if (!sub) return [];
-  try {
-    return parseSubtitleText(fs.readFileSync(sub, "utf8"));
-  } catch {
-    return [];
-  }
-}
-
 export interface IntelResult {
   intel: VideoIntel;
   /** Where the transcript came from — "none" means Deepgram handles it later. */
@@ -348,9 +337,10 @@ export interface IntelResult {
  * The video FILE is not downloaded here — `videoFilePath` is left empty and
  * /api/render pulls the pixels lazily through yt-dlp.
  *
- * Resilient by design: if the Apify actor is unconfigured, fails, or returns
- * nothing, this falls back to yt-dlp metadata + captions so a plain YouTube
- * link still works. Every fallback is reported in `warnings`.
+ * Resilient by design: if the Apify actor omits title or duration, yt-dlp may
+ * provide metadata. Caption scraping is deliberately not a fallback here:
+ * yt-dlp can spend five minutes waiting on YouTube's bot check from cloud IPs.
+ * Missing transcripts are handled later by Deepgram or visual-only planning.
  */
 export async function fetchVideoIntel(url: string): Promise<IntelResult> {
   const sourceUrl = url.trim();
@@ -393,14 +383,11 @@ export async function fetchVideoIntel(url: string): Promise<IntelResult> {
   } catch (err) {
     warnings.push(
       `Apify could not fetch this video (${err instanceof Error ? err.message : String(err)}) — ` +
-        `used yt-dlp metadata and captions instead.`
+        `trying a metadata-only yt-dlp fallback.`
     );
   }
 
   // --- Fallback: yt-dlp ----------------------------------------------------
-  const videoId = extractVideoId(sourceUrl);
-  const stem = videoId ?? `src-${Buffer.from(sourceUrl).toString("base64url").slice(0, 16)}`;
-
   if (!title || durationSec === undefined) {
     const fallback = await metadataFromYtdlp(sourceUrl);
     if (fallback) {
@@ -409,17 +396,10 @@ export async function fetchVideoIntel(url: string): Promise<IntelResult> {
     }
   }
   if (!transcript.length) {
-    const captions = await captionsFromYtdlp(sourceUrl, stem);
-    if (captions.length) {
-      transcript = captions;
-      transcriptSource = "captions";
-    }
-  }
-
-  if (!transcript.length) {
     warnings.push(
-      "No captions were found for this video. That's fine when DEEPGRAM_API_KEY is set — " +
-        "the transcript is generated at edit-plan time."
+      "The Apify actor returned no transcript. yt-dlp caption scraping was skipped to avoid " +
+        "YouTube cloud-IP bot-check delays. With DEEPGRAM_API_KEY, transcription runs at " +
+        "edit-plan time; otherwise the planner uses visual-only analysis."
     );
   }
 
@@ -484,7 +464,8 @@ function normalizeVideoExt(raw: string): string {
  * direct media URL), then fetches that URL to disk. Callers fall back to yt-dlp
  * when this throws (actor unconfigured, run failed, or no media URL returned).
  *
- *   APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID  YouTube downloader actor (preferred for YT)
+ *   APIFY_VIDEO_DOWNLOADER_ACTOR_ID    primary YouTube downloader actor
+ *   APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID  legacy YouTube-specific alias
  *   APIFY_GENERAL_DOWNLOADER_ACTOR_ID   any-site downloader actor (for other links)
  *   APIFY_DOWNLOADER_ACTOR_ID           shared fallback for either
  *
@@ -503,38 +484,51 @@ export async function downloadVideoFileViaApify(opts: {
   const videoId = extractVideoId(sourceUrl);
 
   const platformActor = videoId
-    ? process.env.APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID
+    ? process.env.APIFY_VIDEO_DOWNLOADER_ACTOR_ID ??
+      process.env.APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID
     : process.env.APIFY_GENERAL_DOWNLOADER_ACTOR_ID;
   const actorId =
     (platformActor ?? "").trim() || (process.env.APIFY_DOWNLOADER_ACTOR_ID ?? "").trim();
 
   if (!actorId) {
     throw new Error(
-      "No Apify video-downloader actor is configured. Set APIFY_YOUTUBE_DOWNLOADER_ACTOR_ID " +
-        "(and/or APIFY_DOWNLOADER_ACTOR_ID) in .env.local to a downloader actor id from the " +
-        "Apify Store — e.g. convertfleetdotonline~youtube-downloader. Leave it unset to keep " +
-        "downloading via yt-dlp instead."
+      "No Apify video-downloader actor is configured. Set APIFY_VIDEO_DOWNLOADER_ACTOR_ID " +
+        "to a downloader actor id from the Apify Store, for example " +
+        "boztek-ltd~youtube-downloader."
     );
   }
 
+  const actorInput = actorId.toLowerCase().includes("boztek-ltd~youtube-downloader")
+    ? {
+        startUrls: [{ url: sourceUrl }],
+        downloadType: "video",
+        quality: "720p",
+        maxConcurrency: 1,
+      }
+    : {
+        startUrls: [{ url: sourceUrl }],
+        url: sourceUrl,
+        videoUrl: sourceUrl,
+        videoUrls: [sourceUrl],
+        maxItems: 1,
+      };
+
   const items = await runActor(
-    {
-      startUrls: [{ url: sourceUrl }],
-      url: sourceUrl,
-      videoUrl: sourceUrl,
-      videoUrls: [sourceUrl],
-      maxItems: 1,
-    },
+    actorInput,
     actorId
   );
   if (!items.length) {
-    throw new Error("The Apify downloader actor returned no data for this URL.");
+    throw new Error("The Apify video-downloader actor returned no data for this URL.");
   }
-  const downloadUrl = pickDownloadUrl(items[0]);
+  const result = items.find((item) => String(item?.status ?? "").toUpperCase() === "SUCCESS") ?? items[0];
+  if (String(result?.status ?? "").toUpperCase() === "FAILED") {
+    throw new Error(`The Apify video-downloader actor failed: ${String(result?.error ?? "no reason provided")}`);
+  }
+  const downloadUrl = pickDownloadUrl(result);
   if (!downloadUrl) {
     throw new Error(
-      "The Apify downloader actor didn't return a direct video URL. Make sure the actor id " +
-        "is a video-downloader (one whose output includes an mp4/downloadUrl field)."
+      `The Apify video-downloader actor returned no downloadUrl. ` +
+        `Check its run output; first result keys: ${Object.keys(result ?? {}).join(", ") || "none"}.`
     );
   }
 

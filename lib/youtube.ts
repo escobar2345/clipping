@@ -4,7 +4,7 @@ import { execFileSync } from "child_process";
 import { currentUserId, uploadsDir } from "./userPaths";
 import type { TranscriptWord } from "./types";
 import { parseSubtitleText } from "./subtitles";
-import { downloadMedia, probeMetadata, ytdlpVersion } from "./ytdlp";
+import { probeMetadata, ytdlpVersion } from "./ytdlp";
 import { ffmpegPath } from "./mediaBins";
 import { uploadsUrlPath } from "./userPaths";
 import { downloadVideoFileViaApify } from "./apify";
@@ -187,8 +187,9 @@ export function uploadPathToUrl(absPath: string): string {
 
 /**
  * Ensures a local copy of the YouTube video exists and returns its path.
- * Throws with an actionable message when the id can't be parsed or yt-dlp
- * can't fetch it (private, geo-blocked, age-restricted, removed).
+ * Throws with an actionable message when the id can't be parsed or the
+ * configured Apify downloader cannot fetch it. YouTube downloads intentionally
+ * do not fall back to yt-dlp on the app server.
  */
 export async function ensureVideoFile(youtubeUrl: string): Promise<string> {
   const videoId = extractVideoId(youtubeUrl);
@@ -202,27 +203,9 @@ export async function ensureVideoFile(youtubeUrl: string): Promise<string> {
   const cached = cachedVideoPath(videoId);
   if (cached) return cached;
 
-  // Primary downloader: a configurable Apify video-downloader actor — this is
-  // what you asked for, Apify fetches the actual video file. Any failure (actor
-  // unconfigured, run error, no media URL) falls back to yt-dlp so a YouTube
-  // link always still works.
-  try {
-    return await downloadVideoFileViaApify({
-      url: youtubeUrl,
-      outDir: uploadsDir(),
-      outName: videoId,
-    });
-  } catch (err) {
-    console.warn(
-      `[apify-download] falling back to yt-dlp for ${videoId}: ` +
-        `${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-
-  const { file } = await downloadMedia({
+  return await downloadVideoFileViaApify({
     url: youtubeUrl,
     outDir: uploadsDir(),
     outName: videoId,
   });
-  return file;
 }
