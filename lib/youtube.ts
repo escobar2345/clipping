@@ -4,10 +4,9 @@ import { execFileSync } from "child_process";
 import { currentUserId, uploadsDir } from "./userPaths";
 import type { TranscriptWord } from "./types";
 import { parseSubtitleText } from "./subtitles";
-import { probeMetadata, ytdlpVersion } from "./ytdlp";
+import { downloadMedia, probeMetadata, ytdlpVersion } from "./ytdlp";
 import { ffmpegPath } from "./mediaBins";
 import { uploadsUrlPath } from "./userPaths";
-import { downloadVideoFileViaApify } from "./apify";
 
 /**
  * Downloads a YouTube video to a local file and returns its path.
@@ -187,9 +186,9 @@ export function uploadPathToUrl(absPath: string): string {
 
 /**
  * Ensures a local copy of the YouTube video exists and returns its path.
- * Throws with an actionable message when the id can't be parsed or the
- * configured Apify downloader cannot fetch it. YouTube downloads intentionally
- * do not fall back to yt-dlp on the app server.
+ * Downloads through yt-dlp's updated binary. For YouTube, downloadMedia first
+ * verifies bgutil generated a PO token for this exact video and aborts before
+ * transferring video bytes if the provider is unavailable.
  */
 export async function ensureVideoFile(youtubeUrl: string): Promise<string> {
   const videoId = extractVideoId(youtubeUrl);
@@ -203,9 +202,10 @@ export async function ensureVideoFile(youtubeUrl: string): Promise<string> {
   const cached = cachedVideoPath(videoId);
   if (cached) return cached;
 
-  return await downloadVideoFileViaApify({
+  const { file } = await downloadMedia({
     url: youtubeUrl,
     outDir: uploadsDir(),
     outName: videoId,
   });
+  return file;
 }

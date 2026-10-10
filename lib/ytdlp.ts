@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
+import net from "net";
 import path from "path";
 import { resolveMediaBin } from "./mediaBins";
 
@@ -82,7 +83,7 @@ export function ytDlpGlobalArgs(): string[] {
   }
 
   // Player clients for the PO-token flow (see doc comment). Env-gated.
-  const clients = (process.env.YTDLP_YT_CLIENTS ?? "mweb,tv,web_safari").trim();
+  const clients = (process.env.YTDLP_YT_CLIENTS ?? "mweb").trim();
   if (clients) args.push("--extractor-args", `youtube:player-client=${clients}`);
 
   const cookies = cookiesFile();
@@ -211,6 +212,100 @@ export async function runYtdlp(args: string[], timeoutMs = 20 * 60_000): Promise
   }
 }
 
+function isYouTubeUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "youtu.be" ||
+      host === "youtube.com" ||
+      host.endsWith(".youtube.com") ||
+      host === "youtube-nocookie.com" ||
+      host.endsWith(".youtube-nocookie.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function potServerReachable(timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port: 4416 });
+    const finish = (ok: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+/**
+ * Force a metadata-only YouTube extraction before video transfer. The verbose
+ * output is checked for bgutil's token-generation diagnostic, so a merely
+ * installed plugin or listening-but-broken server isn't mistaken for success.
+ * `--skip-download` ensures this step fetches no video bytes.
+ */
+export async function ensureYouTubePotToken(url: string): Promise<void> {
+  if (!isYouTubeUrl(url)) return;
+
+  const pluginRoot = path.join(process.cwd(), "vendor", "bgutil-ytdlp-pot-provider");
+  if (!fs.existsSync(path.join(pluginRoot, "plugin", "yt_dlp_plugins"))) {
+    throw new Error(
+      "YouTube transfer stopped: the bgutil yt-dlp plugin is missing. Rebuild/redeploy " +
+        "so npm postinstall runs scripts/install-pot-provider.mjs."
+    );
+  }
+  if (!(await potServerReachable())) {
+    throw new Error(
+      "YouTube transfer stopped: bgutil's PO-token server is not responding on " +
+        "127.0.0.1:4416. Check Railway startup logs for [pot]."
+    );
+  }
+
+  const clients = (process.env.YTDLP_YT_CLIENTS ?? "mweb").split(",").map((c) => c.trim());
+  if (!clients.includes("mweb")) {
+    throw new Error(
+      "YouTube transfer stopped: the bgutil PO-token preflight requires the mweb player " +
+        "client. Set YTDLP_YT_CLIENTS=mweb or leave it unset."
+    );
+  }
+
+  const r = await runner();
+  try {
+    const { stderr } = await execFileAsync(
+      r.cmd,
+      [
+        ...r.baseArgs,
+        ...ytDlpGlobalArgs(),
+        "--verbose",
+        "--skip-download",
+        "--dump-single-json",
+        "--no-playlist",
+        url,
+      ],
+      { timeout: 90_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }
+    );
+    const log = String(stderr ?? "");
+    if (!/Generating .*PO Token.*via bgutil/i.test(log)) {
+      const providers = log.match(/PO Token Providers:.*(?:\r?\n|$)/i)?.[0]?.trim();
+      throw new Error(
+        "yt-dlp metadata preflight did not confirm PO-token generation. " +
+          `Detected providers: ${providers ?? "none"}. Check yt-dlp/plugin versions and [pot] logs.`
+      );
+    }
+    console.info("[ytdlp] bgutil generated the YouTube PO token before video transfer.");
+  } catch (err: any) {
+    const detail = String(err?.stderr ?? err?.message ?? err)
+      .trim()
+      .split(/\r?\n/)
+      .slice(-8)
+      .join(" ");
+    throw new Error(`YouTube PO-token preflight failed; video transfer was not started. ${detail}`);
+  }
+}
+
 /** yt-dlp availability + version, for diagnostics. Null when not usable. */
 export async function ytdlpVersion(): Promise<string | null> {
   try {
@@ -326,6 +421,10 @@ export async function downloadMedia(opts: {
 }): Promise<DownloadResult> {
   const { url, outDir, outName, timeoutMs = 20 * 60_000 } = opts;
   fs.mkdirSync(outDir, { recursive: true });
+
+  // Prove bgutil can generate this video's token before even requesting
+  // captions; don't let a failed provider silently proceed to video transfer.
+  await ensureYouTubePotToken(url);
 
   const base = path.join(outDir, outName);
   const format = (process.env.YTDLP_FORMAT ?? "").trim() || DEFAULT_FORMAT;

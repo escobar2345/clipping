@@ -27,6 +27,7 @@ const ASSETS = {
 const isWin = process.platform === "win32";
 const outDir = path.join(process.cwd(), "vendor", "bin");
 const outFile = path.join(outDir, isWin ? "yt-dlp.exe" : "yt-dlp");
+const existingYtdlpWorks = fs.existsSync(outFile) && runs(outFile);
 
 /** Does this binary run and answer --version? */
 function runs(bin) {
@@ -61,18 +62,18 @@ function fail(msg, err) {
     );
     process.exit(0);
   }
+  if (existingYtdlpWorks) {
+    console.warn(
+      `[install-ytdlp] Keeping the existing working yt-dlp binary at ${outFile}.`
+    );
+    process.exit(0);
+  }
   console.error(
     "[install-ytdlp] No system yt-dlp either. Fix network access to github.com " +
       "or install yt-dlp manually, then retry. Without it, rendering clips " +
       "whose source is an external URL will fail."
   );
   process.exit(1);
-}
-
-// Idempotent: keep a working binary (per Railway this is a fresh clone anyway).
-if (fs.existsSync(outFile) && runs(outFile)) {
-  console.log(`[install-ytdlp] already present: ${outFile}`);
-  process.exit(0);
 }
 
 const asset = ASSETS[`${process.platform}-${process.arch}`];
@@ -91,8 +92,11 @@ try {
   fs.writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
   if (!isWin) fs.chmodSync(tmp, 0o755);
   if (!runs(tmp)) throw new Error("downloaded binary failed its --version check");
-  fs.renameSync(tmp, outFile);
-  console.log(`[install-ytdlp] installed -> ${outFile}`);
+  // Copy only after the downloaded binary passed --version. Unlike rename,
+  // copyFileSync safely replaces an existing binary on Windows as well.
+  fs.copyFileSync(tmp, outFile);
+  fs.rmSync(tmp, { force: true });
+  console.log(`[install-ytdlp] updated -> ${outFile}`);
 } catch (err) {
   fail(`could not download ${url}`, err);
 }

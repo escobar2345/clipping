@@ -265,11 +265,16 @@ shared hosted catalog endpoint.
   `duration`/`lengthSeconds`, `subtitles`/`transcript`/`captions`, …), but an unusual actor may
   still need a field added to `mapItem()`. When it can't read the actor it falls back to
   yt-dlp metadata + captions, and reports that in the `warnings` the UI shows you.
-- Video download is handled by **yt-dlp** (`lib/ytdlp.ts`), lazily at render time — analyze only
-  fetches metadata and captions. It must be on PATH (`pip install -U yt-dlp`), or set
-  `YTDLP_PATH` in `.env.local` to the binary. `YTDLP_FORMAT` overrides the video format
-  selector and `YTDLP_SUB_LANGS` the caption languages (default `en`). Because the file lands
-  in `public/uploads`, the host needs a writable disk — see the render route's note on Vercel.
+- YouTube video downloads use the current official **yt-dlp** binary (`lib/ytdlp.ts`),
+  installed/updated during `npm ci`. Before any YouTube video or caption transfer, the app
+  runs a metadata-only check and refuses to transfer bytes unless bgutil reports that it
+  generated a PO token for the video. The `bgutil-ytdlp-pot-provider` plugin/server are
+  installed during postinstall and the server is started with the app (`lib/potServer.ts`).
+  YouTube uses the `mweb` player client by default; `YTDLP_YT_CLIENTS` can override it, but
+  the required preflight stops the transfer if `mweb` is removed. A PO token does not
+  guarantee a datacenter IP will be accepted by YouTube. `YTDLP_FORMAT` overrides the video
+  selector; `YTDLP_SUB_LANGS` controls caption languages (default `en`). Downloaded files
+  land in `public/uploads`, so the host needs writable storage.
 - Rendering is synchronous in `/api/render` today — for long videos/many clips, move this to
   a background job/queue (e.g. a worker process or `@remotion/lambda`) instead of blocking
   an API route.
