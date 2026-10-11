@@ -3,7 +3,7 @@ import { DEPLOYED_HOST, isPublicBaseUrl, publicOrigin } from "../../../lib/tunne
 import { checkDatabase } from "../../../lib/db";
 import { ensureTables } from "../../../lib/dbInit";
 import { resolveMediaBin } from "../../../lib/mediaBins";
-import { ytdlpVersion } from "../../../lib/ytdlp";
+import { ytdlpVersion, resolveYtProxy } from "../../../lib/ytdlp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +43,11 @@ export async function GET(req: NextRequest) {
 
   const db = await checkDatabase();
 
+  // Proxy status: shape only — masked login + host, NEVER the password.
+  const ytProxy = resolveYtProxy();
+  const oxyUser = v("OXYLABS_USER");
+  const oxyPass = v("OXYLABS_PASSWORD");
+
   const report = {
     runtime: {
       deployed: DEPLOYED_HOST,
@@ -75,6 +80,23 @@ export async function GET(req: NextRequest) {
         placeholder: looksPlaceholder(base),
         isPublic: isPublicBaseUrl(base),
         value: base || null, // public by design (it's the site's own URL)
+      },
+      YTDLP_PROXY: {
+        set: !!ytProxy,
+        source: ytProxy?.source ?? null,
+        // Masked login + host only — no password, safe to expose.
+        masked: ytProxy?.masked ?? null,
+      },
+      OXYLABS_USER: {
+        set: !!oxyUser,
+        placeholder: looksPlaceholder(oxyUser),
+      },
+      OXYLABS_PASSWORD: {
+        set: !!oxyPass,
+        placeholder: looksPlaceholder(oxyPass),
+      },
+      YTDLP_COOKIES: {
+        set: !!v("YTDLP_COOKIES") || !!v("YTDLP_COOKIES_FILE"),
       },
     },
     database: {
