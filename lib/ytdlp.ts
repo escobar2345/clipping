@@ -55,7 +55,11 @@ const MISSING_BIN_HINT =
  *   --cookies      YTDLP_COOKIES (Netscape cookies.txt CONTENTS, written to
  *                  data/yt-cookies.txt) or YTDLP_COOKIES_FILE (path). The
  *                  documented fix for datacenter-IP bot checks (bgutil README).
- *   --proxy        YTDLP_PROXY, e.g. a residential proxy URL.
+ *   --proxy        YTDLP_PROXY, a full proxy URL — or built from OXYLABS_*
+ *                  parts (see resolveYtProxy) so the password lives in its own
+ *                  variable instead of one pasted URL. Applied to EVERY
+   *                  YouTube call (preflight + transfer) so YouTube sees the
+   *                  proxy's residential IP, not Railway's datacenter IP.
  */
 export function ytDlpGlobalArgs(): string[] {
   const args: string[] = [];
@@ -89,10 +93,60 @@ export function ytDlpGlobalArgs(): string[] {
   const cookies = cookiesFile();
   if (cookies) args.push("--cookies", cookies);
 
-  const proxy = (process.env.YTDLP_PROXY ?? "").trim();
-  if (proxy) args.push("--proxy", proxy);
+  const proxy = resolveYtProxy();
+  if (proxy) args.push("--proxy", proxy.url);
 
   return args;
+}
+
+/** Where yt-dlp's --proxy value came from. `masked` is log-safe (no password). */
+export interface YtProxyInfo {
+  url: string;
+  masked: string;
+  source: "YTDLP_PROXY" | "OXYLABS";
+}
+
+/**
+ * Resolves the proxy yt-dlp should use. Two sources, in order:
+ *
+ *   1. YTDLP_PROXY — a full proxy URL, used as-is (backwards compatible).
+ *   2. OXYLABS_* parts — builds the Oxylabs residential URL so the password
+ *      lives in its own env var instead of one pasted URL:
+ *        OXYLABS_USER      e.g. resi_823d18d6  (without the customer- prefix)
+ *        OXYLABS_PASSWORD  the password (~uf_1m style value)
+ *        OXYLABS_HOST      default pr.oxylabs.io:7777
+ *        OXYLABS_SESSION   sticky-session id (default: random per boot)
+ *        OXYLABS_SESSTIME  sticky-session minutes (default 10)
+ *
+ * Null = no proxy configured. Exported for tests + /api/health.
+ */
+export function resolveYtProxy(
+  env: NodeJS.ProcessEnv = process.env,
+): YtProxyInfo | null {
+  const direct = (env.YTDLP_PROXY ?? "").trim();
+  if (direct) return { url: direct, masked: maskProxyUrl(direct), source: "YTDLP_PROXY" };
+
+  const user = (env.OXYLABS_USER ?? "").trim();
+  const password = (env.OXYLABS_PASSWORD ?? "").trim();
+  if (!user || !password) return null;
+
+  const host = (env.OXYLABS_HOST ?? "pr.oxylabs.io:7777").trim() || "pr.oxylabs.io:7777";
+  const session = (env.OXYLABS_SESSION ?? "").trim() || Math.floor(Math.random() * 1e10).toString().padStart(10, "0");
+  const sesstime = (env.OXYLABS_SESSTIME ?? "10").trim() || "10";
+  const login = user.startsWith("customer-") ? user : `customer-${user}-sessid-${session}-sesstime-${sesstime}`;
+  const url = `http://${login}:${encodeURIComponent(password)}@${host}`;
+  return { url, masked: `http://${login}:***@${host}`, source: "OXYLABS" };
+}
+
+/** Log-safe form of a proxy URL: keeps host + login, drops the password. */
+export function maskProxyUrl(url: string): string {
+  try {
+    const u = new URL(url.includes("://") ? url : `http://${url}`);
+    const login = u.username ? `${decodeURIComponent(u.username)}@` : "";
+    return `${u.protocol}//${login}***@${u.host}${u.pathname}`;
+  } catch {
+    return url.replace(/(:\/\/[^:/@]+:)[^/@]+(@)/, "$1***$2");
+  }
 }
 
 /** Resolves the cookies file to pass yt-dlp, writing YTDLP_COOKIES contents out. Null = none. */
@@ -208,7 +262,10 @@ export async function runYtdlp(args: string[], timeoutMs = 20 * 60_000): Promise
     const reason = stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" ").trim();
     const base = reason || `yt-dlp failed: ${err?.message ?? "unknown error"}`;
     const advice = botCheckAdvice(base);
-    throw new Error(advice ? `${base}\n\n→ ${advice}` : base);
+    // Don't print the proxy URL (it carries the password) — mask it first.
+    const p = resolveYtProxy();
+    const safe = p ? base.split(p.url).join(p.masked) : base;
+    throw new Error(advice ? `${safe}\n\n→ ${advice}` : safe);
   }
 }
 
