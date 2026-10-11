@@ -117,6 +117,10 @@ export interface YtProxyInfo {
  *        OXYLABS_HOST      default pr.oxylabs.io:7777
  *        OXYLABS_SESSION   sticky-session id (default: random per boot)
  *        OXYLABS_SESSTIME  sticky-session minutes (default 10)
+ *   3. Optional geo pin — stable exit, e.g. Chandler, Arizona:
+ *        OXYLABS_COUNTRY   e.g. us (suffix: cc-us)
+ *        OXYLABS_STATE     e.g. arizona (suffix: st-arizona)
+ *        OXYLABS_CITY      e.g. chandler (suffix: city-chandler)
  *
  * Null = no proxy configured. Exported for tests + /api/health.
  */
@@ -133,7 +137,18 @@ export function resolveYtProxy(
   const host = (env.OXYLABS_HOST ?? "pr.oxylabs.io:7777").trim() || "pr.oxylabs.io:7777";
   const session = (env.OXYLABS_SESSION ?? "").trim() || Math.floor(Math.random() * 1e10).toString().padStart(10, "0");
   const sesstime = (env.OXYLABS_SESSTIME ?? "10").trim() || "10";
-  const login = user.startsWith("customer-") ? user : `customer-${user}-sessid-${session}-sesstime-${sesstime}`;
+  // Optional geo pin (stable residential exit — YouTube trusts a fixed
+  // residential geo more than a rotating one). Oxylabs suffix format:
+  // customer-<user>-cc-us-st-arizona-city-chandler-sessid-...-sesstime-...
+  const slug = (v: string) =>
+    v.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const cc = slug(env.OXYLABS_COUNTRY ?? "");
+  const st = slug(env.OXYLABS_STATE ?? "");
+  const city = slug(env.OXYLABS_CITY ?? "");
+  const geo = [cc && `cc-${cc}`, st && `st-${st}`, city && `city-${city}`].filter(Boolean).join("-");
+  const login = user.startsWith("customer-")
+    ? user
+    : `customer-${user}${geo ? `-${geo}` : ""}-sessid-${session}-sesstime-${sesstime}`;
   const url = `http://${login}:${encodeURIComponent(password)}@${host}`;
   return { url, masked: `http://${login}:***@${host}`, source: "OXYLABS" };
 }

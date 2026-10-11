@@ -86,6 +86,11 @@ export async function GET(req: NextRequest) {
         source: ytProxy?.source ?? null,
         // Masked login + host only — no password, safe to expose.
         masked: ytProxy?.masked ?? null,
+        geo: {
+          country: v("OXYLABS_COUNTRY") || null,
+          state: v("OXYLABS_STATE") || null,
+          city: v("OXYLABS_CITY") || null,
+        },
       },
       OXYLABS_USER: {
         set: !!oxyUser,
