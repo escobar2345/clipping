@@ -84,9 +84,9 @@ export default function Page() {
               🎙️ Voice-Over &amp; Cloning
             </button>
             <a
-              href="/filmcraft/index.html"
+              href="/filmcraft/index.html?webgl"
               data-testid="tab-editing"
-              title="Open FilmCraft — the original Premiere-style editor"
+              title="Open FilmCraft — the original Premiere-style editor (WebGL2 backend for compatibility)"
               style={{
                 ...tabBtn(false),
                 display: "inline-flex",
