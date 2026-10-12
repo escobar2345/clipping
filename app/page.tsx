@@ -84,9 +84,9 @@ export default function Page() {
               🎙️ Voice-Over &amp; Cloning
             </button>
             <a
-              href="/filmcraft/index.html?cpu"
+              href="/filmcraft/index.html?webgl"
               data-testid="tab-editing"
-              title="Open FilmCraft — the original Premiere-style editor (CPU renderer for maximum compatibility). If it's too slow, try ?webgl in the URL."
+              title="Open FilmCraft — the original Premiere-style editor (WebGL2 backend). If it ever shows blank, add ?cpu to the URL."
               style={{
                 ...tabBtn(false),
                 display: "inline-flex",
