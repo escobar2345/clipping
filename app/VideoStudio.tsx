@@ -664,11 +664,22 @@ export default function VideoStudio() {
         mode,
         dueAtIso: mode === "schedule" ? new Date(dueAt[clipIndex]).toISOString() : undefined,
       });
+      // Surface Buffer's REAL per-channel error — the old UI only showed a
+      // count ("1 failed") and threw away the cause, which made posting
+      // failures impossible to diagnose.
+      const failed = (data.results ?? []).filter((r) => !r.ok);
+      const reason = failed
+        .map((r) => r.error)
+        .filter(Boolean)
+        .join(" | ");
+      const where = data.publicBaseUrl ? ` (from ${data.publicBaseUrl})` : "";
       setPostResult((prev) => ({
         ...prev,
         [clipIndex]: `Queued on ${data.summary.succeeded}/${data.summary.total} channels${
           data.summary.failed > 0 ? ` · ${data.summary.failed} failed` : ""
-        } ✓`,
+        }${data.summary.succeeded > 0 ? " ✓" : ""}${
+          reason ? ` — ${reason}${where}` : ""
+        }`,
       }));
     } catch (e: any) {
       setError(e.message);

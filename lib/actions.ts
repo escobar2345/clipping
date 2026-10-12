@@ -943,8 +943,16 @@ export function summarizeOutcome(kind: string, outcome: ActionOutcome): string {
         return `${r.type} effect added at ${r.atSec}s to clip(s) ${(r.clipIndexes ?? []).join(", ")} — re-render to see it.`;
       case "clear_effects":
         return `Cleared ${r.cleared} from clip(s) ${(r.clipIndexes ?? []).join(", ")}.`;
-      case "post_to_buffer":
-        return `Posted to ${r.summary?.succeeded ?? 0}/${r.summary?.total ?? 0} channels.`;
+      case "post_to_buffer": {
+        const s = r.summary ?? { succeeded: 0, total: 0 };
+        const failed = (r.results ?? []).filter((x: any) => !x.ok);
+        const reason = failed
+          .map((x: any) => x.error)
+          .filter(Boolean)
+          .join(" | ");
+        const base = `Posted to ${s.succeeded ?? 0}/${s.total ?? 0} channels.`;
+        return reason ? `${base} FAILED: ${reason}` : base;
+      }
       case "delete_render":
         return `Deleted rendered clip ${r.file}.`;
       case "delete_upload":

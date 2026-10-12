@@ -28,6 +28,19 @@ export interface PostResponse {
   /** Id of a single post (kept for single-target responses). */
   id?: string;
   error?: string;
+  /** Per-target details from lib/bufferPost.ts — each is
+   *  { accountId, channelId, ok, post? , error? }. We surface `error`
+   *  in the UI so a failed post shows Buffer's real reason instead of
+   *  a bare "1 failed". */
+  results?: Array<{
+    accountId: string;
+    channelId: string;
+    ok: boolean;
+    post?: any;
+    error?: string;
+  }>;
+  /** The public base URL Buffer fetched the video from (tunnel/domain). */
+  publicBaseUrl?: string;
 }
 
 /** Tunnel info for serving rendered videos to Buffer. */
