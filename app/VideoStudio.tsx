@@ -637,6 +637,17 @@ export default function VideoStudio() {
     }
   }
 
+  /** Resolve a channel's Buffer service (e.g. "youtube", "instagram",
+   *  "tiktok") from the loaded accounts so a post can carry the per-service
+   *  metadata Buffer requires — YouTube is rejected without a title+category. */
+  function serviceForChannelId(channelId: string): string {
+    for (const a of accountChannels) {
+      const c = (a.channels ?? []).find((x) => x.id === channelId);
+      if (c) return c.service ?? "";
+    }
+    return "";
+  }
+
   async function handlePostToBuffer(clipIndex: number) {
     const renderedPath = renderedUrls[clipIndex];
     const mode = postMode[clipIndex] ?? "queue";
@@ -645,9 +656,14 @@ export default function VideoStudio() {
       .filter(([, on]) => on)
       .map(([key]) => {
         const splitAt = key.indexOf(":");
+        const channelId = key.slice(splitAt + 1);
         return {
           accountId: key.slice(0, splitAt),
-          channelId: key.slice(splitAt + 1),
+          channelId,
+          // Look up the channel's service (youtube, instagram, tiktok, …) so the
+          // server can attach required per-service metadata — YouTube posts are
+          // rejected without a title + category (see lib/bufferPost.ts).
+          service: serviceForChannelId(channelId),
         };
       });
     if (!renderedPath || targets.length === 0) return;

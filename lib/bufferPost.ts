@@ -17,6 +17,11 @@ export interface PostTarget {
   /** "story" | "reel" — Buffer's Instagram post type. Only applied to
    *  Instagram channels; Buffer's API exposes no TikTok story type. */
   postType?: string;
+  /** YouTube only: the video title. Buffer requires one, so when omitted the
+   *  shared caption is used as the title. */
+  title?: string;
+  /** YouTube only: category ID (e.g. "22" People & Blogs). Defaults to "22". */
+  categoryId?: string;
 }
 
 /** Build the CreatePostInput.metadata that posts an Instagram channel to
@@ -27,6 +32,29 @@ export function instagramMetadata(postType: string | undefined): Record<string, 
   if (postType === "story") return { instagram: { type: "story", shouldShareToFeed: false } };
   if (postType === "reel") return { instagram: { type: "reel", shouldShareToFeed: true } };
   return null;
+}
+
+/**
+ * Build the CreatePostInput.metadata for a YouTube channel. Buffer's API
+ * REJECTS a YouTube post that is missing a title or category ("YouTube posts
+ * require a title." / "... require a category."), so both are mandatory here.
+ * `title` falls back to the shared caption when the caller didn't supply one,
+ * and `categoryId` defaults to "22" (People & Blogs) — a safe catch-all. The
+ * category list is Buffer's fixed set, e.g. 22 People & Blogs, 24
+ * Entertainment, 20 Gaming, 28 Science & Technology.
+ */
+export function youtubeMetadata(
+  title: string | undefined,
+  fallbackCaption: string,
+  categoryId?: string
+): Record<string, any> {
+  const safeTitle = (title?.trim() || fallbackCaption?.trim() || "New video").slice(0, 100);
+  return {
+    youtube: {
+      title: safeTitle,
+      categoryId: (categoryId?.trim() || "22"),
+    },
+  };
 }
 
 /**
@@ -84,6 +112,18 @@ export async function postToBufferTargets(input: {
         const account = accountCache.get(t.accountId);
         if (!account) throw new Error(`Unknown account: ${t.accountId}`);
 
+        // Per-service metadata. Instagram exposes story/reel; YouTube REQUIRES
+        // a title + category or Buffer rejects the post outright. Other
+        // services (TikTok, X, Facebook, …) need none — leaving metadata off
+        // avoids sending them a malformed body.
+        const svc = (t.service ?? "").toLowerCase();
+        let metadata: Record<string, any> | undefined;
+        if (svc.includes("instagram")) {
+          metadata = instagramMetadata(t.postType) ?? undefined;
+        } else if (svc.includes("youtube")) {
+          metadata = youtubeMetadata(t.title, t.caption?.trim() || caption, t.categoryId);
+        }
+
         const post = await createVideoPost(
           {
             channelId: t.channelId,
@@ -91,13 +131,7 @@ export async function postToBufferTargets(input: {
             videoUrl,
             mode,
             dueAtIso,
-            // Only Instagram exposes story/reel through Buffer's API (their
-            // TikTokPostMetadataInput has no `type`) — ignore postType for
-            // every other service so a stray UI flag can't corrupt a
-            // TikTok/YouTube/Facebook post.
-            metadata: (t.service ?? "").toLowerCase().includes("instagram")
-              ? instagramMetadata(t.postType) ?? undefined
-              : undefined,
+            metadata,
           },
           account.accessToken
         );
