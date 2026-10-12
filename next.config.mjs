@@ -17,6 +17,19 @@ const nextConfig = {
       "@rspack/core",
     ],
   },
+  // FilmCraft's WebAssembly editor is served statically from public/filmcraft.
+  // Per its HOSTING.md it needs NO isolation headers (no SharedArrayBuffer) —
+  // the only hard requirement is that .wasm is served as application/wasm so
+  // the browser can stream-compile it. Next serves public/ with that MIME by
+  // default; this rule is a belt-and-suspenders guarantee for the .wasm file.
+  async headers() {
+    return [
+      {
+        source: "/filmcraft/:file*.wasm",
+        headers: [{ key: "Content-Type", value: "application/wasm" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

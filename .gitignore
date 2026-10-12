@@ -58,3 +58,13 @@ public/renders/
 # yt-dlp binary fetched by scripts/install-ytdlp.mjs (postinstall) — artifact, not source
 vendor/
 voice-server/voice-server.log
+
+# Local scratch / build artifacts — never commit
+render-smoke-test.ts
+tsc-out.txt
+gitstate.ps1
+gitstate.txt
+
+# FilmCraft upstream Rust source (huge) — the deployed editor is the prebuilt
+# WASM bundle in public/filmcraft/, not this checkout.
+filmcraft-main/

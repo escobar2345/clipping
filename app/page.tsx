@@ -3,17 +3,14 @@
 import React, { useState } from "react";
 import VideoStudio from "./VideoStudio";
 import VoiceStudio from "./components/VoiceStudio";
-import EditingStudio from "./components/EditingStudio";
 
 const ACCENT = "#FF5A1F";
 
-type Tab = "video" | "voice" | "editing";
+type Tab = "video" | "voice";
 
 const TAB_HINT: Record<Tab, string> = {
   video: "You are in Video Studio — click a button above to switch",
   voice: "You are in Voice-Over & Cloning — click a button above to go back",
-  editing:
-    "You are in Editing Studio — a Premiere-style editor you drive yourself, or hand to the AI by chat or voice",
 };
 
 export default function Page() {
@@ -86,17 +83,20 @@ export default function Page() {
             >
               🎙️ Voice-Over &amp; Cloning
             </button>
-            <button
-              type="button"
+            <a
+              href="/filmcraft/index.html"
               data-testid="tab-editing"
-              style={tabBtn(activeTab === "editing")}
-              onClick={() => {
-                setActiveTab("editing");
-                window.scrollTo({ top: 0 });
+              title="Open FilmCraft — the original Premiere-style editor"
+              style={{
+                ...tabBtn(false),
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textDecoration: "none",
               }}
             >
               🎞️ Editing Studio
-            </button>
+            </a>
           </div>
           <div
             style={{
@@ -111,13 +111,7 @@ export default function Page() {
         </div>
       </header>
 
-      {activeTab === "editing" ? (
-        <EditingStudio />
-      ) : activeTab === "video" ? (
-        <VideoStudio />
-      ) : (
-        <VoiceStudio />
-      )}
+      {activeTab === "video" ? <VideoStudio /> : <VoiceStudio />}
     </div>
   );
 }

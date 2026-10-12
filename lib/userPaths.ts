@@ -114,7 +114,10 @@ export function uploadsUrlPath(fileName: string): string {
 }
 
 export function rendersUrlPath(fileName: string): string {
-  return `/renders/${currentUserId()}/${path.basename(fileName)}`;
+  // Serve through a route handler, NOT the static /renders/ path: production
+  // `next start` snapshots public/ at boot, so clips rendered after boot 404
+  // under /renders/… (the route reads from disk per request and bypasses it).
+  return `/api/render-file/${currentUserId()}/${path.basename(fileName)}`;
 }
 
 export function voiceUrlPath(fileName: string): string {

@@ -33,6 +33,7 @@ const PUBLIC_API = [
   // Remotion's headless browser has no user cookie. The path is constrained
   // to a UUID folder and a video filename by the media route itself.
   "/api/media/uploads",
+  "/api/render-file",
 ];
 
 /** Static media (source videos + rendered clips) stays reachable WITHOUT a
@@ -44,7 +45,7 @@ const PUBLIC_API = [
  *    server-side too.
  *  The file LISTINGS still go through the protected /api/uploads and
  *  /api/renders routes — only the bytes are public. */
-const PUBLIC_MEDIA = ["/uploads/", "/renders/"];
+const PUBLIC_MEDIA = ["/uploads/", "/renders/", "/filmcraft/"];
 
 function isPublicMedia(pathname: string): boolean {
   return PUBLIC_MEDIA.some((p) => pathname.startsWith(p));
