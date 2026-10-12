@@ -8,13 +8,14 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
 import { resolveRenderSourceVideo } from "./renderSource";
 import { downloadEditPlanAssets } from "./higgsfieldAssets";
+import { rendersDir, rendersUrlPath } from "./userPaths";
 import type { EditPlan } from "./types";
 
 /** Rendering writes hundreds of MB (source mp4 + output mp4). Serverless
  *  hosts like Vercel have a read-only app directory — fail up front with a
  *  human message instead of ENOENT/EROFS mid-render. */
 export function assertWritableDisk() {
-  const probeDir = path.join(process.cwd(), "public", "renders");
+  const probeDir = rendersDir();
   try {
     fs.mkdirSync(probeDir, { recursive: true });
     const probe = path.join(probeDir, `.write-probe-${Date.now()}`);
@@ -78,7 +79,11 @@ export async function renderClipToDisk(
     inputProps,
   });
 
-  const outDir = path.join(process.cwd(), "public", "renders");
+  // Per-user folder (public/renders/<userId>/) — same destination the button
+  // path (/api/render) uses, so chat renders and button renders land together
+  // and the gallery + hydration find them. A flat public/renders/ write left
+  // the clip invisible to /api/renders, which only lists rendersDir().
+  const outDir = rendersDir();
   fs.mkdirSync(outDir, { recursive: true });
   const clipId = plan.clips[clipIndex].clipId || `clip-${clipIndex}`;
   const outputLocation = path.join(outDir, `${clipId}.mp4`);
@@ -121,5 +126,5 @@ export async function renderClipToDisk(
   });
   fs.writeFileSync(manifestPath, JSON.stringify({ renders }, null, 2));
 
-  return { url: `/renders/${clipId}.mp4`, clipId };
+  return { url: rendersUrlPath(`${clipId}.mp4`), clipId };
 }

@@ -8,6 +8,7 @@ import { pipeline } from "stream/promises";
 import { withRetry } from "./retry";
 import { localFileUrl, remuxIfNeeded } from "./youtube";
 import { downloadVideoFileViaApify } from "./apify";
+import { resolveYtProxy } from "./ytdlp";
 import { parseSubtitleText } from "./subtitles";
 import { ffprobePath } from "./mediaBins";
 import type { TranscriptWord } from "./types";
@@ -227,10 +228,26 @@ async function ytDlpRun(
   timeoutMs: number
 ): Promise<string> {
   const cookies = cookieBrowserArgs();
+  // Route EVERY anywhere-path yt-dlp call through the residential proxy too —
+  // previously only lib/ytdlp.ts added --proxy, so YouTube links analyzed via
+  // analyzeAnyUrl went out on the raw datacenter IP and OxyLabs saw 0 hits.
+  // Call resolveYtProxy ONCE and derive --proxy from that same object: the
+  // default session id is random per call, so resolving twice would log one
+  // sessid while yt-dlp actually dials another.
+  const proxy = resolveYtProxy();
+  const proxyArgs = proxy ? ["--proxy", proxy.url] : [];
+  if (proxy) {
+    console.log(`[anywhere] using proxy ${proxy.masked} for ${url.slice(0, 80)}`);
+  } else {
+    console.warn(
+      `[anywhere] NO proxy resolved (OXYLABS_USER/OXYLABS_PASSWORD or YTDLP_PROXY missing) — ` +
+        `request to ${url.slice(0, 80)} goes out on the raw server IP`
+    );
+  }
   const attempt = (extra: string[]) =>
     execFileAsync(
       "yt-dlp",
-      ["--no-playlist", ...extra, ...baseArgs, url],
+      ["--no-playlist", ...proxyArgs, ...extra, ...baseArgs, url],
       { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }
     );
   try {

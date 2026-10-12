@@ -17,11 +17,14 @@ export async function resolveRenderSourceVideo(
   const candidate = sourceVideoPath?.trim() ?? "";
 
   if (candidate) {
+    const looksLikeWindowsAbsPath = /^[A-Za-z]:[\\/]/.test(candidate);
     let url: URL | null = null;
-    try {
-      url = new URL(candidate);
-    } catch {
-      // Absolute on-disk paths are also accepted from older edit plans.
+    if (!looksLikeWindowsAbsPath) {
+      try {
+        url = new URL(candidate);
+      } catch {
+        // Absolute on-disk paths are also accepted from older edit plans.
+      }
     }
 
     const isLoopbackUrl =

@@ -126,6 +126,7 @@ export interface YtProxyInfo {
  */
 export function resolveYtProxy(
   env: NodeJS.ProcessEnv = process.env,
+  overrides: { session?: string; geoLevel?: "full" | "country" | "none" } = {},
 ): YtProxyInfo | null {
   const direct = (env.YTDLP_PROXY ?? "").trim();
   if (direct) return { url: direct, masked: maskProxyUrl(direct), source: "YTDLP_PROXY" };
@@ -259,10 +260,20 @@ async function runner(): Promise<Runner> {
 /** Runs yt-dlp with the given args and returns stdout. */
 export async function runYtdlp(args: string[], timeoutMs = 20 * 60_000): Promise<string> {
   const r = await runner();
+  const global = ytDlpGlobalArgs();
+  const p = resolveYtProxy();
+  if (p) {
+    console.log(`[ytdlp] using proxy ${p.masked} (source=${p.source})`);
+  } else {
+    console.warn(
+      `[ytdlp] NO proxy resolved (OXYLABS_USER/OXYLABS_PASSWORD or YTDLP_PROXY missing) — ` +
+        `YouTube sees the raw server IP`
+    );
+  }
   try {
     const { stdout } = await execFileAsync(
       r.cmd,
-      [...r.baseArgs, ...ytDlpGlobalArgs(), ...args],
+      [...r.baseArgs, ...global, ...args],
       {
         timeout: timeoutMs,
         windowsHide: true,

@@ -3,10 +3,18 @@
 import React, { useState } from "react";
 import VideoStudio from "./VideoStudio";
 import VoiceStudio from "./components/VoiceStudio";
+import EditingStudio from "./components/EditingStudio";
 
 const ACCENT = "#FF5A1F";
 
-type Tab = "video" | "voice";
+type Tab = "video" | "voice" | "editing";
+
+const TAB_HINT: Record<Tab, string> = {
+  video: "You are in Video Studio — click a button above to switch",
+  voice: "You are in Voice-Over & Cloning — click a button above to go back",
+  editing:
+    "You are in Editing Studio — a Premiere-style editor you drive yourself, or hand to the AI by chat or voice",
+};
 
 export default function Page() {
   const [activeTab, setActiveTab] = useState<Tab>("video");
@@ -38,7 +46,7 @@ export default function Page() {
       >
         <div
           style={{
-            maxWidth: 760,
+            maxWidth: 1000,
             margin: "0 auto",
             padding: "14px 20px",
           }}
@@ -78,6 +86,17 @@ export default function Page() {
             >
               🎙️ Voice-Over &amp; Cloning
             </button>
+            <button
+              type="button"
+              data-testid="tab-editing"
+              style={tabBtn(activeTab === "editing")}
+              onClick={() => {
+                setActiveTab("editing");
+                window.scrollTo({ top: 0 });
+              }}
+            >
+              🎞️ Editing Studio
+            </button>
           </div>
           <div
             style={{
@@ -87,14 +106,18 @@ export default function Page() {
               color: "#8A8D93",
             }}
           >
-            {activeTab === "video"
-              ? "You are in Video Studio — click the orange button to switch to Voice-Over & Cloning"
-              : "You are in Voice-Over & Cloning — click Video Studio to go back"}
+            {TAB_HINT[activeTab]}
           </div>
         </div>
       </header>
 
-      {activeTab === "video" ? <VideoStudio /> : <VoiceStudio />}
+      {activeTab === "editing" ? (
+        <EditingStudio />
+      ) : activeTab === "video" ? (
+        <VideoStudio />
+      ) : (
+        <VoiceStudio />
+      )}
     </div>
   );
 }

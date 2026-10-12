@@ -37,6 +37,7 @@ import { allSpecs } from "./platforms";
 import { buildViralPack } from "./viralPack";
 import { cutStoryTeaser } from "./storyCut";
 import { renderClipToDisk } from "./renderClip";
+import { rendersDir } from "./userPaths";
 import { postToBufferTargets } from "./bufferPost";
 import {
   createTask,
@@ -615,7 +616,9 @@ export async function deleteRender(file: string): Promise<ActionOutcome> {
   if (!file.toLowerCase().endsWith(".mp4")) {
     throw new Error("Invalid file name");
   }
-  const dir = path.join(process.cwd(), "public", "renders");
+  // Per-user renders folder — never the shared flat public/renders/ root,
+  // where this delete used to look and silently fail with "no such file".
+  const dir = rendersDir();
   const target = path.join(dir, file);
   if (!fs.existsSync(target)) {
     throw new Error(`No rendered clip named ${file} exists`);

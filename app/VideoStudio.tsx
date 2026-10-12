@@ -216,11 +216,15 @@ export default function VideoStudio() {
         .map((r) => r.file)
     );
     if (matching.size === 0) return;
+    // Take the URL the server already built (/renders/<userId>/<file>) rather
+    // than reassembling it from the bare filename — the per-user folder is not
+    // something the client can reconstruct, and guessing it yields a 404 player.
+    const urlByFile = new Map(existingRenders.map((r) => [r.file, r.url]));
     setRenderedUrls((prev) => {
       const next = { ...prev };
       editPlan.clips.forEach((clip, i) => {
         const file = `${clip.clipId}.mp4`;
-        if (!next[i] && matching.has(file)) next[i] = `/renders/${file}`;
+        if (!next[i] && matching.has(file)) next[i] = urlByFile.get(file) ?? `/renders/${file}`;
       });
       return next;
     });
@@ -464,12 +468,13 @@ export default function VideoStudio() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Delete failed");
       // If a per-clip player above is showing exactly this file, unhook it so
-      // the UI never points at a deleted video.
-      const dead = `/renders/${file}`;
+      // the UI never points at a deleted video. Compare on the basename: the
+      // live URL carries the per-user folder (/renders/<userId>/<file>), so an
+      // exact string match against a reconstructed path would never hit.
       setRenderedUrls((prev) => {
         const next: Record<number, string> = {};
         for (const [k, v] of Object.entries(prev)) {
-          if (v !== dead) next[Number(k)] = v;
+          if (v.split("/").pop() !== file) next[Number(k)] = v;
         }
         return next;
       });
