@@ -92,6 +92,63 @@ function parseCopilot(raw: string): { reply: string; steps: CopilotStep[] } {
   }
 }
 
+/**
+ * The client ships the LIVE command catalog (`context.commands`), which can be
+ * very large — every command plus its full param schema. POSTing that whole to
+ * NVIDIA risks a connection reset that surfaces as the SDK's generic
+ * "Connection error." Reduce it to just the command id + its param names, and
+ * keep the project state, so the model still only ever emits real command ids.
+ */
+function compactContext(ctx: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!ctx) return out;
+  if (ctx.inspect) out.inspect = ctx.inspect;
+  if (ctx.files) out.files = ctx.files;
+  if (ctx.transcript) out.transcript = ctx.transcript;
+  const cmds = Array.isArray(ctx.commands) ? ctx.commands : [];
+  out.commands = cmds
+    .slice(0, 400)
+    .map((c: any) => {
+      const params = c?.params ?? c?.parameters ?? c?.args;
+      return {
+        id: c?.id ?? c?.command ?? c?.name ?? "",
+        params: Array.isArray(params)
+          ? params
+              .map((p: any) => (typeof p === "string" ? p : p?.name ?? p?.id ?? ""))
+              .filter(Boolean)
+          : typeof params === "object" && params
+          ? Object.keys(params)
+          : [],
+      };
+    })
+    .filter((c: any) => c.id);
+  return out;
+}
+
+/**
+ * Build the user message JSON with a hard size cap so we never send a giant
+ * body. If it's too big we shed the bulkiest optional fields (transcript, then
+ * the command list) — always producing VALID JSON, never a truncated string.
+ */
+function buildUserContent(
+  instruction: string,
+  history: unknown[] | undefined,
+  ctx: Record<string, unknown> | undefined
+): string {
+  const base = { instruction, history: (history ?? []).slice(-12) as unknown[] };
+  const context = compactContext(ctx);
+  let s = JSON.stringify({ ...base, context });
+  if (s.length > 24000 && context.transcript) {
+    delete context.transcript;
+    s = JSON.stringify({ ...base, context });
+  }
+  if (s.length > 24000 && Array.isArray(context.commands) && context.commands.length) {
+    context.commands = (context.commands as any[]).map((c: any) => c.id);
+    s = JSON.stringify({ ...base, context });
+  }
+  return s;
+}
+
 export const POST = withAuth(
   async (req: Request) => {
     try {
@@ -121,11 +178,7 @@ export const POST = withAuth(
           { role: "system", content: SYSTEM },
           {
             role: "user",
-            content: JSON.stringify({
-              instruction: body.instruction,
-              history: body.history ?? [],
-              context: body.context ?? {},
-            }),
+            content: buildUserContent(body.instruction, body.history, body.context),
           },
         ],
       });
