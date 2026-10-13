@@ -6,8 +6,8 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 // Same NVIDIA OpenAI-compatible endpoint + model the rest of the app uses (see
-// lib/nvidiaGlm.ts and /api/studio/ai). Non-streaming, proven transport.
-const MODEL = process.env.NVIDIA_CHAT_MODEL ?? "z-ai/glm-5.3";
+// lib/nvidiaGlm.ts). Non-streaming, proven transport.
+const MODEL = process.env.NVIDIA_GLM_MODEL ?? "nvidia/nemotron-3-ultra-550b-a55b";
 
 let _client: OpenAI | null = null;
 function client(): OpenAI {
@@ -15,8 +15,8 @@ function client(): OpenAI {
     _client = new OpenAI({
       apiKey: process.env.NVIDIA_API_KEY,
       baseURL: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1",
-      timeout: 120_000,
-      maxRetries: 1,
+      timeout: 180_000,
+      maxRetries: 0,
     });
   }
   return _client;
