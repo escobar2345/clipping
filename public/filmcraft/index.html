@@ -25,6 +25,44 @@
     #fatal h1 { margin: 0 0 8px; font-size: 17px; color: #ff8a7a; }
     #fatal pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; font-size: 12px; color: #c9c9cc; }
     #fatal button { font: inherit; padding: 6px 14px; border: 0; border-radius: 6px; background: #3b6fe0; color: #fff; cursor: pointer; }
+
+    /* ----- AI Co-Pilot (Long2SHORT) ---------------------------------- */
+    #copilot { position: fixed; top: 12px; right: 12px; width: 340px; max-width: calc(100vw - 24px);
+      display: flex; flex-direction: column; background: #232428; color: #e7e7ea; border: 1px solid #3a3b41;
+      border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.5); z-index: 9999; font: 13px/1.45 system-ui, sans-serif;
+      overflow: hidden; }
+    #copilot.collapsed { width: auto; }
+    #copilot.collapsed #cpBody { display: none; }
+    #cpBar { display: flex; align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; user-select: none;
+      background: linear-gradient(180deg,#2c2d33,#24252a); }
+    #cpBar .dot { width: 9px; height: 9px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 8px #4ade80; }
+    #cpBar .dot.busy { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+    #cpBar .dot.err { background: #f87171; box-shadow: 0 0 8px #f87171; }
+    #cpTitle { font-weight: 600; flex: 1; }
+    #cpBack { color: #9aa0aa; text-decoration: none; font-size: 12px; padding: 2px 6px; border-radius: 5px; }
+    #cpBack:hover { background: #34353c; color: #fff; }
+    #cpMin { color: #9aa0aa; cursor: pointer; padding: 0 4px; }
+    #cpBody { display: flex; flex-direction: column; max-height: min(70vh, 620px); }
+    #cpLog { padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; min-height: 120px; max-height: 46vh; }
+    .cp-msg { padding: 7px 9px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+    .cp-msg.user { background: #3b6fe0; color: #fff; align-self: flex-end; max-width: 88%; }
+    .cp-msg.ai { background: #2f3036; color: #e7e7ea; align-self: flex-start; max-width: 92%; }
+    .cp-msg.step { background: #26272b; color: #a9b0bd; align-self: flex-start; max-width: 92%; font-size: 12px; border-left: 3px solid #3b6fe0; }
+    .cp-msg.step.done { border-left-color: #4ade80; color: #c7cbd3; }
+    .cp-msg.step.fail { border-left-color: #f87171; color: #f1b7b3; }
+    .cp-msg.err { background: #402326; color: #ffb4ae; }
+    #cpForm { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #34353c; background: #26272b; }
+    #cpInput { flex: 1; background: #1c1d20; color: #e7e7ea; border: 1px solid #3a3b41; border-radius: 7px; padding: 8px 9px; font: inherit; resize: none; }
+    #cpInput:focus { outline: none; border-color: #3b6fe0; }
+    #cpSend, #cpMic { border: 0; border-radius: 7px; padding: 8px 12px; font: inherit; cursor: pointer; color: #fff; }
+    #cpSend { background: #3b6fe0; }
+    #cpSend:disabled { opacity: .5; cursor: default; }
+    #cpMic { background: #2f3036; }
+    #cpMic.rec { background: #e04b4b; box-shadow: 0 0 0 3px rgba(224,75,75,.25); }
+    #cpHint { padding: 0 10px 8px; color: #7c828d; font-size: 11px; background: #26272b; }
+    #cpToggle { position: fixed; top: 12px; right: 12px; z-index: 9998; display: none; background: #3b6fe0; color: #fff;
+      border: 0; border-radius: 8px; padding: 8px 12px; font: inherit; cursor: pointer; }
+    #copilot.collapsed ~ #cpToggle { display: block; }
   </style>
 </head>
 <body>
@@ -38,6 +76,27 @@
       <button id="fatal-reload" type="button">Reload</button>
     </div>
   </div>
+
+  <!-- AI Co-Pilot (Long2SHORT) — floats over the editor and drives window.filmcraft -->
+  <div id="copilot">
+    <div id="cpBar">
+      <span class="dot" id="cpDot"></span>
+      <span id="cpTitle">🎬 AI Co‑Pilot</span>
+      <a id="cpBack" href="/" title="Back to Long2SHORT">← Back</a>
+      <span id="cpMin" title="Minimise">—</span>
+    </div>
+    <div id="cpBody">
+      <div id="cpLog"></div>
+      <form id="cpForm" autocomplete="off">
+        <textarea id="cpInput" rows="2" placeholder="Tell me what to edit… or 🎤 speak"></textarea>
+        <button id="cpMic" type="button" title="Speak">🎤</button>
+        <button id="cpSend" type="submit">Send</button>
+      </form>
+      <div id="cpHint">I can see the timeline &amp; imported clips. I edit step by step as you watch.</div>
+    </div>
+  </div>
+  <button id="cpToggle" type="button">💬 AI Co‑Pilot</button>
+
   <script>
     // A Rust panic (or an out-of-memory abort) inside a frame stops the app for good: eframe logs
     // "panicked at …" with console.error, then the wasm traps ("RuntimeError: unreachable") and
@@ -90,6 +149,94 @@
       }
       throw e;
     }
+  </script>
+
+  <script>
+  // ---- Long2SHORT AI Co-Pilot -------------------------------------------
+  // Floats over FilmCraft and drives it through window.filmcraft. On each
+  // message it snapshots the live project (inspect), imported media (files)
+  // and the REAL command catalog (commands), sends them to /api/filmcraft/copilot
+  // where the NVIDIA/GLM model turns the instruction into ordered commands, then
+  // runs them one-by-one so the user watches the edit happen. Voice = Web Speech.
+  (function () {
+    var panel=document.getElementById("copilot"),log=document.getElementById("cpLog"),
+        form=document.getElementById("cpForm"),input=document.getElementById("cpInput"),
+        send=document.getElementById("cpSend"),mic=document.getElementById("cpMic"),
+        dot=document.getElementById("cpDot"),min=document.getElementById("cpMin"),
+        toggle=document.getElementById("cpToggle");
+    var history=[];
+    function fc(){return window.filmcraft||null;}
+    min.onclick=function(){panel.classList.add("collapsed");};
+    toggle.onclick=function(){panel.classList.remove("collapsed");input.focus();};
+    function addMsg(cls,text){var el=document.createElement("div");el.className="cp-msg "+cls;el.textContent=text;log.appendChild(el);log.scrollTop=log.scrollHeight;return el;}
+    function setDot(s){dot.className="dot"+(s?" "+s:"");}
+    // Guarded snapshot: a method that is missing/not-ready just drops that field.
+    async function gatherContext(){
+      var f=fc(),ctx={}; if(!f) return ctx;
+      try{ if(typeof f.inspect==="function") ctx.inspect=await f.inspect();
+           else if(typeof f.request==="function") ctx.inspect=await f.request("ui.inspect",{}); }catch(e){}
+      try{ if(typeof f.files==="function") ctx.files=await f.files(); }catch(e){}
+      try{ if(typeof f.commands==="function") ctx.commands=await f.commands(); }catch(e){}
+      return ctx;
+    }
+    async function runSteps(steps){
+      var f=fc();
+      for(var i=0;i<steps.length;i++){
+        var s=steps[i], label=s.description||s.command||("Step "+(i+1));
+        var node=addMsg("step","▸ "+label);
+        try{
+          if(!f||typeof f.execute!=="function") throw new Error("FilmCraft API is not ready yet");
+          await f.execute(s.command,s.params||{});
+          node.classList.add("done"); node.textContent="✔ "+label;
+        }catch(err){
+          node.classList.add("fail"); node.textContent="✖ "+label+" — "+(err&&err.message?err.message:err);
+        }
+      }
+    }
+    async function ask(instruction){
+      instruction=(instruction||"").trim(); if(!instruction) return;
+      addMsg("user",instruction); input.value=""; setDot("busy"); send.disabled=true;
+      try{
+        var ctx=await gatherContext();
+        var res=await fetch("/api/filmcraft/copilot",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({instruction:instruction,history:history,context:ctx})});
+        var data=await res.json().catch(function(){return {};});
+        if(!res.ok) throw new Error(data.error||("Request failed (HTTP "+res.status+")"));
+        if(data.reply) addMsg("ai",data.reply);
+        history.push({role:"user",content:instruction});
+        history.push({role:"assistant",content:data.reply||""});
+        if(history.length>20) history=history.slice(-20);
+        if(Array.isArray(data.steps)&&data.steps.length) await runSteps(data.steps);
+        setDot("");
+      }catch(err){
+        setDot("err"); addMsg("err",err&&err.message?err.message:String(err));
+      }finally{ send.disabled=false; input.focus(); }
+    }
+    form.onsubmit=function(e){e.preventDefault();ask(input.value);};
+    // Voice (Chrome/Edge): record one utterance and send it.
+    var rec=null,recognizing=false;
+    function stopMic(){recognizing=false;mic.classList.remove("rec");mic.textContent="🎤";}
+    mic.onclick=function(){
+      var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+      if(!SR){addMsg("err","Voice isn't supported in this browser. Use Chrome or Edge, or type your instruction.");return;}
+      if(recognizing&&rec){rec.stop();return;}
+      rec=new SR(); rec.lang=document.documentElement.lang||"en-US"; rec.interimResults=false; rec.maxAlternatives=1;
+      recognizing=true; mic.classList.add("rec"); mic.textContent="⏹";
+      rec.onresult=function(e){var t=e.results[0][0].transcript;input.value=t;stopMic();ask(t);};
+      rec.onerror=function(e){stopMic();if(e.error!=="aborted")addMsg("err","Voice error: "+e.error);};
+      rec.onend=function(){stopMic();};
+      try{rec.start();}catch(e){stopMic();addMsg("err","Could not start the mic: "+(e.message||e));}
+    };
+    addMsg("ai","Hi! I'm your editing Co‑Pilot. I can see the timeline and your imported clips. Tell me what to do — e.g. “split this clip at the playhead”, “trim the first clip to 8 seconds”, or “add a title over the playhead”.");
+    // Wait for FilmCraft to expose window.filmcraft.execute before turning the dot green.
+    (function waitForApi(){
+      var waited=0, iv=setInterval(function(){
+        waited+=500; var f=fc();
+        if(f&&typeof f.execute==="function"){clearInterval(iv);setDot("");}
+        else if(waited>25000){clearInterval(iv);setDot("err");}
+      },500);
+    })();
+  })();
   </script>
 </body>
 </html>
